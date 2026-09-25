@@ -1,0 +1,10 @@
+{
+  "name": "Lift Ledger",
+  "short_name": "Lift Ledger",
+  "description": "Log every set. Nothing is ever deleted.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1b1e22",
+  "theme_color": "#1b1e22",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
