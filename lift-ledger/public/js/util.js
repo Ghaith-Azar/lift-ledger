@@ -226,6 +226,55 @@ export function promptSheet({ title, label, value = '', placeholder = '', submit
   });
 }
 
+/**
+ * For destructive, irreversible actions: the person must type an exact
+ * phrase before the confirm button even becomes clickable. Resolves true
+ * if confirmed, false if cancelled or dismissed.
+ */
+export function confirmTypingSheet({ title, warning, confirmWord = 'DELETE', confirmLabel = 'Delete' }) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (result, close) => {
+      if (done) return;
+      done = true;
+      close();
+      resolve(result);
+    };
+    openSheet({
+      title,
+      onClose: () => {
+        if (!done) {
+          done = true;
+          resolve(false);
+        }
+      },
+      body: (close) => {
+        const input = h('input', {
+          type: 'text',
+          autocomplete: 'off',
+          spellcheck: 'false',
+          placeholder: confirmWord,
+          'aria-label': `Type ${confirmWord} to confirm`,
+        });
+        const confirmBtn = h('button', { class: 'btn danger block', disabled: true }, confirmLabel);
+        input.addEventListener('input', () => {
+          confirmBtn.disabled = input.value !== confirmWord;
+        });
+        confirmBtn.addEventListener('click', () => finish(true, close));
+        return h(
+          'div',
+          { class: 'stack' },
+          h('p', {}, warning),
+          h('label', { class: 'field-label' }, `Type ${confirmWord} to confirm`),
+          input,
+          confirmBtn,
+          h('button', { class: 'btn ghost block', onClick: () => finish(false, close) }, 'Cancel')
+        );
+      },
+    });
+  });
+}
+
 /** A list of tappable actions, used for "…" menus. */
 export function menuSheet(title, items) {
   return openSheet({

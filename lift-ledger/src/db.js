@@ -174,3 +174,24 @@ export async function migrate() {
     }
   }
 }
+
+/**
+ * The one deliberate exception to "nothing is ever deleted": a full factory
+ * reset for testing. Dropping a table also drops the no-delete trigger tied
+ * to it (SQLite ties triggers to their table), so this bypasses them
+ * cleanly rather than fighting them — then migrate() rebuilds everything
+ * from scratch, triggers included.
+ */
+export async function resetAll() {
+  const dropOrder = [...PROTECTED_TABLES].reverse();
+  await batch(dropOrder.map((table) => ({ sql: `DROP TABLE IF EXISTS ${table}` })));
+  try {
+    await run(
+      `DELETE FROM sqlite_sequence WHERE name IN (${dropOrder.map(() => '?').join(',')})`,
+      dropOrder
+    );
+  } catch {
+    // sqlite_sequence may not exist yet on a brand new database — fine either way.
+  }
+  await migrate();
+}

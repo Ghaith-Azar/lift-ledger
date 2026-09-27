@@ -1,5 +1,6 @@
-import { h, fmtDate, relDay, fmtVolume, pluralize } from '../util.js';
+import { h, icon, fmtDate, relDay, fmtVolume, pluralize } from '../util.js';
 import { state, groupById, plateColor } from '../state.js';
+import { suggestionsFor } from '../exerciseLibrary.js';
 
 export function groupChip(groupId) {
   const g = groupById(groupId);
@@ -76,6 +77,27 @@ export function sparkline(values, { width = 72, height = 28, color = 'currentCol
   dot.setAttribute('fill', color);
   svg.append(dot);
   return svg;
+}
+
+/**
+ * Tappable chips of common exercises for a muscle group, skipping any name
+ * already in `existingNames`. Returns null if there's nothing left to
+ * suggest, so callers can drop it straight into a layout with `&&`.
+ */
+export function suggestionChips(groupName, existingNames, onPick) {
+  const existingLower = new Set([...existingNames].map((n) => n.toLowerCase()));
+  const names = suggestionsFor(groupName).filter((n) => !existingLower.has(n.toLowerCase()));
+  if (!names.length) return null;
+  return h(
+    'div',
+    { style: { margin: '10px 0' } },
+    h('p', { class: 'field-label', style: { margin: '0 0 6px' } }, 'Common exercises'),
+    h(
+      'div',
+      { class: 'chips' },
+      names.map((name) => h('button', { class: 'chip', onClick: () => onPick(name) }, icon('plus', 14), name))
+    )
+  );
 }
 
 /** progressing / regressing / plateau / building / inactive → a small coloured badge. */

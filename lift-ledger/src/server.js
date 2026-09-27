@@ -6,6 +6,7 @@ import { authRouter, requireAuth, authEnabled } from './auth.js';
 import { catalogRouter } from './routes/catalog.js';
 import { workoutsRouter } from './routes/workouts.js';
 import { progressRouter } from './routes/progress.js';
+import { adminRouter } from './routes/admin.js';
 import { HttpError } from './validate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -34,7 +35,7 @@ app.use(express.json({ limit: '200kb' }));
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
 app.use('/api/auth', authRouter);
-app.use('/api', requireAuth, catalogRouter, workoutsRouter, progressRouter);
+app.use('/api', requireAuth, catalogRouter, workoutsRouter, progressRouter, adminRouter);
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
 app.use('/vendor/chart.js', express.static(path.join(root, 'node_modules/chart.js/dist')));

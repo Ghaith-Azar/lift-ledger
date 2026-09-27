@@ -15,7 +15,7 @@ import {
   pluralize,
 } from '../util.js';
 import { state, loadCatalog, activeGroups, exercisesOfGroup, plateColor, groupById } from '../state.js';
-import { groupChip, workoutTitle } from './shared.js';
+import { groupChip, workoutTitle, suggestionChips } from './shared.js';
 
 const LETTERS = 'ABCDEFGH';
 
@@ -387,8 +387,8 @@ export async function workoutView(container, [idParam]) {
       paint();
     });
 
-    const create = safe(async (input) => {
-      const name = input.value.trim();
+    const create = safe(async (name) => {
+      name = name.trim();
       if (!name) return;
       const ex = await api.post('/api/exercises', { name, muscle_group_id: groupId });
       await loadCatalog();
@@ -406,8 +406,9 @@ export async function workoutView(container, [idParam]) {
       }
       const present = new Set(activeExercises().map((e) => e.exercise_id));
       const list = exercisesOfGroup(groupId);
+      const groupName = groups.find((g) => g.id === groupId)?.name || '';
       const input = h('input', { type: 'text', placeholder: 'New exercise name', maxlength: 80, 'aria-label': 'New exercise name' });
-      input.addEventListener('keydown', (ev) => ev.key === 'Enter' && create(input));
+      input.addEventListener('keydown', (ev) => ev.key === 'Enter' && create(input.value));
 
       body.append(
         h(
@@ -444,7 +445,8 @@ export async function workoutView(container, [idParam]) {
               )
             : h('p', { class: 'muted' }, 'No exercises in this group yet. Add your first one below.')
         ),
-        h('div', { class: 'add-inline' }, input, h('button', { class: 'btn primary', onClick: () => create(input) }, 'Add'))
+        suggestionChips(groupName, list.map((ex) => ex.name), create),
+        h('div', { class: 'add-inline' }, input, h('button', { class: 'btn primary', onClick: () => create(input.value) }, 'Add'))
       );
     }
 

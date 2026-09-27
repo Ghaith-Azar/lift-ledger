@@ -1,6 +1,7 @@
 import { api } from '../api.js';
-import { h, clear, appendAll, icon, safe, toast, promptSheet, menuSheet, openSheet, pluralize } from '../util.js';
+import { h, clear, appendAll, icon, safe, toast, promptSheet, confirmTypingSheet, menuSheet, openSheet, pluralize } from '../util.js';
 import { state, loadCatalog, activeGroups, activeDays, exercisesOfGroup, groupById, plateColor } from '../state.js';
+import { suggestionChips } from './shared.js';
 
 const TEMPLATES = [
   {
@@ -70,11 +71,10 @@ export async function splitView(container) {
 
   // ---------- Exercises ----------
 
-  const addExercise = safe(async (group, input) => {
-    const name = input.value.trim();
+  const addExercise = safe(async (group, name) => {
+    name = name.trim();
     if (!name) return;
     await api.post('/api/exercises', { name, muscle_group_id: group.id });
-    input.value = '';
     await refresh();
   });
 
@@ -130,9 +130,10 @@ export async function splitView(container) {
   }
 
   function groupCard(g, { showArchivedExercises } = {}) {
-    const list = exercisesOfGroup(g.id).concat(showArchivedExercises ? exercisesOfGroup(g.id, { archived: true }) : []);
+    const active = exercisesOfGroup(g.id);
+    const list = active.concat(showArchivedExercises ? exercisesOfGroup(g.id, { archived: true }) : []);
     const input = h('input', { type: 'text', placeholder: `Add exercise to ${g.name}`, maxlength: 80, 'aria-label': `Add exercise to ${g.name}` });
-    input.addEventListener('keydown', (e) => e.key === 'Enter' && addExercise(g, input));
+    input.addEventListener('keydown', (e) => e.key === 'Enter' && addExercise(g, input.value));
 
     return h(
       'div',
@@ -157,7 +158,12 @@ export async function splitView(container) {
             )
           )
         : h('p', { class: 'muted small', style: { margin: '8px 0' } }, 'No exercises yet.'),
-      h('div', { class: 'add-inline' }, input, h('button', { class: 'btn small', onClick: () => addExercise(g, input) }, icon('plus', 16)))
+      suggestionChips(
+        g.name,
+        active.map((ex) => ex.name),
+        (name) => addExercise(g, name)
+      ),
+      h('div', { class: 'add-inline' }, input, h('button', { class: 'btn small', onClick: () => addExercise(g, input.value) }, icon('plus', 16)))
     );
   }
 
@@ -260,6 +266,22 @@ export async function splitView(container) {
     toast(`${tpl.name} added — tweak it any time`);
   }
 
+  // ---------- Data ----------
+
+  const deleteAllData = safe(async () => {
+    const confirmed = await confirmTypingSheet({
+      title: 'Delete all data?',
+      warning:
+        'This permanently erases every muscle group, exercise, split day, workout and set — including the edit history. This cannot be undone.',
+      confirmWord: 'DELETE',
+      confirmLabel: 'Delete everything',
+    });
+    if (!confirmed) return;
+    await api.post('/api/danger/reset-all-data', { confirm: 'DELETE ALL DATA' });
+    location.hash = '#/';
+    location.reload();
+  });
+
   function render() {
     const groups = activeGroups();
     const days = activeDays();
@@ -350,6 +372,28 @@ export async function splitView(container) {
         pluralize(groups.reduce((a, g) => a + exercisesOfGroup(g.id).length, 0), 'exercise'),
         ' across ',
         pluralize(groups.length, 'muscle group')
+      )
+    );
+
+    sections.push(
+      h('h2', { class: 'section-title' }, 'Data'),
+      h(
+        'div',
+        { class: 'card' },
+        h('p', { style: { fontWeight: 700 } }, 'Export a backup'),
+        h('p', { class: 'muted small', style: { margin: '4px 0 10px' } }, 'Downloads everything as JSON, including the full edit history.'),
+        h('a', { class: 'btn block', href: '/api/export' }, icon('down', 18), 'Export all data')
+      ),
+      h(
+        'div',
+        { class: 'card', style: { marginTop: '10px', borderLeft: '4px solid var(--down)' } },
+        h('p', { style: { fontWeight: 700, color: 'var(--down)' } }, 'Danger zone'),
+        h(
+          'p',
+          { class: 'muted small', style: { margin: '4px 0 10px' } },
+          'Permanently erases every muscle group, exercise, split day, workout and set — including the edit history. Meant for testing. There is no undo, so export a backup first if you want one.'
+        ),
+        h('button', { class: 'btn danger block', onClick: deleteAllData }, 'Delete all data')
       )
     );
 
