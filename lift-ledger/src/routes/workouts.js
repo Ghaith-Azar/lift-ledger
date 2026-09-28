@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { all, get, run, batch, updateRow } from '../db.js';
+import { estimate1RM } from '../analytics.js';
 import {
   bad,
   notFound,
@@ -267,6 +268,48 @@ workoutsRouter.post('/workout-exercises/:id/unlink', async (req, res) => {
   res.json(await loadWorkout(we.workout_id));
 });
 
+// ---------- Personal records ----------
+
+/**
+ * Does this set beat everything logged before it for the same exercise?
+ * Returns { type: 'weight' | 'e1rm' | 'reps', value } or null.
+ * The very first time an exercise is logged is never a PR (nothing to beat).
+ */
+async function detectPR(exerciseId, setId, weight, reps) {
+  if (!reps || reps <= 0) return null;
+  const history = await all(
+    `SELECT s.weight, s.reps FROM sets s
+       JOIN workout_exercises we ON we.id = s.workout_exercise_id
+       JOIN workouts w ON w.id = we.workout_id
+      WHERE we.exercise_id = ? AND s.id != ?
+        AND s.archived = 0 AND we.archived = 0 AND w.archived = 0
+        AND s.reps IS NOT NULL AND s.reps > 0`,
+    [exerciseId, setId]
+  );
+  if (!history.length) return null;
+
+  const w = weight ?? 0;
+  let maxWeight = 0;
+  let bestE1rm = 0;
+  let bestReps = 0;
+  for (const h of history) {
+    const hw = h.weight ?? 0;
+    maxWeight = Math.max(maxWeight, hw);
+    bestE1rm = Math.max(bestE1rm, estimate1RM(hw, h.reps));
+    bestReps = Math.max(bestReps, h.reps);
+  }
+
+  if (w > 0) {
+    if (w > maxWeight) return { type: 'weight', value: w };
+    const e1rm = estimate1RM(w, reps);
+    if (e1rm > bestE1rm + 0.05) return { type: 'e1rm', value: Math.round(e1rm * 10) / 10 };
+    return null;
+  }
+  // Bodyweight-only movement: the record is reps.
+  if (maxWeight === 0 && reps > bestReps) return { type: 'reps', value: reps };
+  return null;
+}
+
 // ---------- Sets ----------
 
 workoutsRouter.post('/workout-exercises/:id/sets', async (req, res) => {
@@ -333,7 +376,7 @@ workoutsRouter.post('/workout-exercises/:id/copy-previous', async (req, res) => 
 workoutsRouter.patch('/sets/:id', async (req, res) => {
   const id = reqInt(req.params.id);
   const old = await get(
-    `SELECT s.*, we.workout_id FROM sets s
+    `SELECT s.*, we.workout_id, we.exercise_id FROM sets s
        JOIN workout_exercises we ON we.id = s.workout_exercise_id WHERE s.id = ?`,
     [id]
   );
@@ -356,5 +399,15 @@ workoutsRouter.patch('/sets/:id', async (req, res) => {
   }
 
   if (patch.archived !== undefined) return res.json(await loadWorkout(old.workout_id));
-  res.json({ set: updated });
+
+  // Only look for a record when this save actually changed the numbers of a main set.
+  const changed =
+    (patch.weight !== undefined && patch.weight !== old.weight) ||
+    (patch.reps !== undefined && patch.reps !== old.reps);
+  const pr =
+    changed && updated.drop_index === 0
+      ? await detectPR(old.exercise_id, id, updated.weight, updated.reps)
+      : null;
+
+  res.json({ set: updated, pr });
 });

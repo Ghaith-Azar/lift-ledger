@@ -29,7 +29,7 @@ const round = (n, digits = 1) => {
 };
 
 // Epley formula. A single rep is the weight itself.
-const estimate1RM = (weight, reps) => (weight > 0 ? (reps === 1 ? weight : weight * (1 + reps / 30)) : 0);
+export const estimate1RM = (weight, reps) => (weight > 0 ? (reps === 1 ? weight : weight * (1 + reps / 30)) : 0);
 
 // ---------- Data ----------
 
@@ -323,5 +323,35 @@ export async function overview(today) {
     last_week: totalFor(lastIdx),
     total_workouts: new Set(rows.map((r) => r.workout_id)).size,
     lifts,
+  };
+}
+
+// ---------- Bodyweight ----------
+
+const mean = (list) => list.reduce((a, x) => a + x.weight, 0) / list.length;
+
+export async function bodyweightOverview() {
+  const rows = await all(
+    `SELECT id, date, weight, notes FROM bodyweight_logs WHERE archived = 0 ORDER BY date, id`
+  );
+  if (!rows.length) return { has_data: false };
+
+  // Daily weight is noisy (water, food), so also give a trailing average of the last 7 weigh-ins.
+  const withAvg = rows.map((r, i) => ({
+    ...r,
+    avg: round(mean(rows.slice(Math.max(0, i - 6), i + 1)), 1),
+  }));
+  const first = rows[0];
+  const latest = rows[rows.length - 1];
+  const last7 = rows.slice(-7);
+  const prev7 = rows.slice(-14, -7);
+
+  return {
+    has_data: true,
+    entries: withAvg.slice(-90),
+    first: { date: first.date, weight: first.weight },
+    latest: { date: latest.date, weight: latest.weight },
+    change_total: round(latest.weight - first.weight, 1),
+    recent_change: prev7.length ? round(mean(last7) - mean(prev7), 1) : null,
   };
 }

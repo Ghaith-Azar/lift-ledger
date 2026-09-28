@@ -23,6 +23,18 @@ JSON API. Charts are drawn with Chart.js.
 - **Progress** shows weekly trends per exercise — top weight, estimated 1RM,
   average reps, volume — with a plain-language trend read-out (progressing /
   plateaued / regressing), plus muscle-group set volume across weeks.
+- **Quick weight buttons** — tap a weight box and −5 / −2.5 / +2.5 / +5 buttons appear
+  under it. A burst of taps saves as a single edit.
+- **PR celebration** — beating your best weight (or best estimated 1RM, or reps for
+  bodyweight moves) on an exercise pops a gold toast and confetti. The first time you
+  ever log an exercise never counts, since there is nothing to beat.
+- **Bodyweight** — log weigh-ins from the Progress tab. Shows the latest weight, the
+  change over the last 7 weigh-ins and since you started, and a chart with a 7-weigh-in
+  average line (daily weight is noisy). Weight changes are shown in neutral colours,
+  since up or down is not good or bad by itself.
+- **Muscle balance** — compares each muscle group's sets over the last 4 weeks with your
+  most-trained group and flags any that are 30%+ behind or missing. Uses sets rather than
+  volume so heavy compound lifts don't skew it.
 - **Nothing is ever deleted.** Removing a set or exercise archives it (with an
   undo toast on the spot); the database itself has triggers that refuse `DELETE`
   statements outright. Every edit is written to an `edit_log` table with the

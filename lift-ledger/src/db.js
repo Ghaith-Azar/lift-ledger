@@ -129,6 +129,15 @@ const TABLES = [
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  `CREATE TABLE IF NOT EXISTS bodyweight_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    weight REAL NOT NULL,
+    notes TEXT,
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
   `CREATE TABLE IF NOT EXISTS edit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     table_name TEXT NOT NULL,
@@ -145,6 +154,7 @@ const INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_we_exercise ON workout_exercises (exercise_id)',
   'CREATE INDEX IF NOT EXISTS idx_sets_we ON sets (workout_exercise_id)',
   'CREATE INDEX IF NOT EXISTS idx_exercises_group ON exercises (muscle_group_id)',
+  'CREATE INDEX IF NOT EXISTS idx_bodyweight_date ON bodyweight_logs (date)',
 ];
 
 const PROTECTED_TABLES = [
@@ -155,6 +165,7 @@ const PROTECTED_TABLES = [
   'workouts',
   'workout_exercises',
   'sets',
+  'bodyweight_logs',
   'edit_log',
 ];
 

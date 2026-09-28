@@ -1145,6 +1145,77 @@ textarea:focus {
   padding: 4px;
 }
 
+/* ---------- Personal records ---------- */
+
+.toast.pr {
+  background: linear-gradient(135deg, #ffc72c, #f59a4a);
+  color: #15181b;
+  font-weight: 800;
+}
+
+.confetti-host {
+  position: fixed;
+  left: 50%;
+  top: 34%;
+  width: 0;
+  height: 0;
+  z-index: 70;
+  pointer-events: none;
+}
+
+.confetti-piece {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  opacity: 0;
+  animation: confetti 1s ease-out forwards;
+  animation-delay: var(--delay, 0ms);
+}
+
+@keyframes confetti {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--x), var(--y)) rotate(var(--rot));
+  }
+}
+
+/* ---------- Quick weight steppers ---------- */
+
+.stepper-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.stepper-btn {
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 16px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.stepper-btn.minus {
+  background: color-mix(in srgb, var(--down) 16%, var(--surface-2));
+}
+
+.stepper-btn.plus {
+  background: color-mix(in srgb, var(--up) 16%, var(--surface-2));
+}
+
+.stepper-btn:active {
+  transform: scale(0.96);
+}
+
 /* ---------- Login ---------- */
 
 .login {

@@ -123,11 +123,11 @@ export function fmtSet(s) {
 
 // ---------- Toasts ----------
 
-export function toast(message, { actionLabel, onAction, ms = 5000, error = false } = {}) {
+export function toast(message, { actionLabel, onAction, ms = 5000, error = false, variant = '' } = {}) {
   const host = document.getElementById('toasts');
   const el = h(
     'div',
-    { class: `toast${error ? ' error' : ''}`, role: error ? 'alert' : 'status' },
+    { class: `toast${error ? ' error' : ''}${variant ? ` ${variant}` : ''}`, role: error ? 'alert' : 'status' },
     h('span', {}, message),
     actionLabel &&
       h(
@@ -144,6 +144,26 @@ export function toast(message, { actionLabel, onAction, ms = 5000, error = false
   );
   host.append(el);
   setTimeout(() => el.remove(), error ? Math.max(ms, 6500) : ms);
+}
+
+/** A gold toast plus a short confetti burst, for personal records. */
+export function celebratePR(message) {
+  toast(message, { ms: 4500, variant: 'pr' });
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+
+  const host = h('div', { class: 'confetti-host', 'aria-hidden': 'true' });
+  const palette = ['--p0', '--p1', '--p2', '--p3', '--p4', '--p5', '--p6'];
+  for (let i = 0; i < 18; i++) {
+    const piece = h('span', { class: 'confetti-piece' });
+    piece.style.setProperty('--x', `${Math.round((Math.random() - 0.5) * 260)}px`);
+    piece.style.setProperty('--y', `${120 + Math.round(Math.random() * 120)}px`);
+    piece.style.setProperty('--rot', `${Math.round((Math.random() - 0.5) * 540)}deg`);
+    piece.style.setProperty('--delay', `${Math.round(Math.random() * 120)}ms`);
+    piece.style.background = `var(${palette[i % palette.length]})`;
+    host.append(piece);
+  }
+  document.body.append(host);
+  setTimeout(() => host.remove(), 1200);
 }
 
 export function safe(fn) {

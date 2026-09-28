@@ -5,6 +5,7 @@ import {
   appendAll,
   icon,
   toast,
+  celebratePR,
   safe,
   openSheet,
   promptSheet,
@@ -70,6 +71,78 @@ export async function workoutView(container, [idParam]) {
 
   // ---------- Set rows ----------
 
+  function prMessage(e, pr) {
+    const name = e.exercise_name;
+    if (pr.type === 'weight') return `🏆 New PR! ${fmtNum(pr.value)} ${state.unit} on ${name}`;
+    if (pr.type === 'reps') return `🏆 New PR! ${pr.value} reps on ${name}`;
+    return `🏆 New PR! Strongest effort yet on ${name} (est. 1RM ${fmtNum(pr.value)} ${state.unit})`;
+  }
+
+  /**
+   * Quick -5 / -2.5 / +2.5 / +5 buttons that appear under a weight field while it is focused.
+   * Taps update the box instantly and save once, shortly after the last tap, so a burst of
+   * taps is one edit (and at most one PR celebration).
+   */
+  function attachStepper(input, s, commit) {
+    let bar = null;
+    let timer = null;
+
+    const flush = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+        commit();
+      }
+    };
+
+    const adjust = (delta) => {
+      const raw = input.value.trim().replace(',', '.');
+      const typed = Number(raw);
+      const base = raw !== '' && Number.isFinite(typed) ? typed : Number(s.weight) || 0;
+      const next = Math.max(0, Math.round((base + delta) * 100) / 100);
+      input.value = fmtNum(next);
+      input.focus({ preventScroll: true });
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        commit();
+      }, 500);
+    };
+
+    input.addEventListener('focus', () => {
+      if (bar) return;
+      bar = h(
+        'div',
+        { class: 'stepper-row' },
+        [-5, -2.5, 2.5, 5].map((d) =>
+          h(
+            'button',
+            {
+              type: 'button',
+              class: `stepper-btn ${d < 0 ? 'minus' : 'plus'}`,
+              'aria-label': `${d > 0 ? 'Add' : 'Remove'} ${Math.abs(d)} ${state.unit}`,
+              // Keep the field focused so the buttons don't vanish mid-tap.
+              onMouseDown: (ev) => ev.preventDefault(),
+              onClick: () => adjust(d),
+            },
+            `${d > 0 ? '+' : '−'}${Math.abs(d)}`
+          )
+        )
+      );
+      input.closest('.set-row')?.after(bar);
+    });
+
+    input.addEventListener('blur', () => {
+      flush();
+      setTimeout(() => {
+        if (document.activeElement !== input) {
+          bar?.remove();
+          bar = null;
+        }
+      }, 200);
+    });
+  }
+
   function numberInput(e, s, field, placeholder, label) {
     const input = h('input', {
       type: 'text',
@@ -82,30 +155,32 @@ export async function workoutView(container, [idParam]) {
       value: s[field] ?? '',
       'aria-label': label,
     });
+
+    const commit = safe(async () => {
+      const raw = input.value.trim().replace(',', '.');
+      const value = raw === '' ? null : Number(raw);
+      const invalid =
+        value !== null && (!Number.isFinite(value) || value < 0 || (field === 'reps' && !Number.isInteger(value)));
+      if (invalid) {
+        input.value = s[field] ?? '';
+        toast(field === 'reps' ? 'Reps must be a whole number' : 'Enter a valid weight', { error: true });
+        return;
+      }
+      if (value === (s[field] ?? null)) return;
+      try {
+        const res = await api.patch(`/api/sets/${s.id}`, { [field]: value });
+        s[field] = res.set[field];
+        updateSummary();
+        if (res.pr) celebratePR(prMessage(e, res.pr));
+      } catch (err) {
+        input.value = s[field] ?? '';
+        throw err;
+      }
+    });
+
     input.addEventListener('focus', () => input.select());
-    input.addEventListener(
-      'change',
-      safe(async () => {
-        const raw = input.value.trim().replace(',', '.');
-        const value = raw === '' ? null : Number(raw);
-        const invalid =
-          value !== null && (!Number.isFinite(value) || value < 0 || (field === 'reps' && !Number.isInteger(value)));
-        if (invalid) {
-          input.value = s[field] ?? '';
-          toast(field === 'reps' ? 'Reps must be a whole number' : 'Enter a valid weight', { error: true });
-          return;
-        }
-        if (value === (s[field] ?? null)) return;
-        try {
-          const res = await api.patch(`/api/sets/${s.id}`, { [field]: value });
-          s[field] = res.set[field];
-          updateSummary();
-        } catch (err) {
-          input.value = s[field] ?? '';
-          throw err;
-        }
-      })
-    );
+    input.addEventListener('change', commit);
+    if (field === 'weight') attachStepper(input, s, commit);
     return input;
   }
 

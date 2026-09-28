@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { all } from '../db.js';
-import { exerciseDetail, overview } from '../analytics.js';
+import { exerciseDetail, overview, bodyweightOverview } from '../analytics.js';
 import { reqInt, reqDate } from '../validate.js';
 
 export const progressRouter = Router();
@@ -9,6 +9,10 @@ const todayFrom = (req) => (req.query.today ? reqDate(req.query.today) : new Dat
 
 progressRouter.get('/progress/overview', async (req, res) => {
   res.json(await overview(todayFrom(req)));
+});
+
+progressRouter.get('/progress/bodyweight', async (req, res) => {
+  res.json(await bodyweightOverview());
 });
 
 progressRouter.get('/progress/exercises/:id', async (req, res) => {
@@ -25,6 +29,7 @@ progressRouter.get('/export', async (req, res) => {
     'workouts',
     'workout_exercises',
     'sets',
+    'bodyweight_logs',
     'edit_log',
   ];
   const data = { exported_at: new Date().toISOString() };
