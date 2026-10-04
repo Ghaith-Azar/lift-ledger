@@ -242,6 +242,46 @@ export async function exerciseDetail(exerciseId, today) {
   };
 }
 
+// ---------- Personal records ----------
+
+export async function allRecords() {
+  const rows = await loadRows();
+  if (!rows.length) return { has_data: false };
+
+  const records = [];
+  for (const list of groupBy(rows, (r) => r.exercise_id).values()) {
+    const hasWeight = list.some((r) => r.weight > 0);
+    let heaviest = null;
+    let bestE1rm = null;
+    let bestReps = null;
+    for (const r of list) {
+      if (!heaviest || r.weight > heaviest.weight || (r.weight === heaviest.weight && r.reps > heaviest.reps)) {
+        heaviest = { weight: r.weight, reps: r.reps, date: r.date, workout_id: r.workout_id };
+      }
+      const est = estimate1RM(r.weight, r.reps);
+      if (est > 0 && (!bestE1rm || est > bestE1rm.value)) {
+        bestE1rm = { value: round(est), weight: r.weight, reps: r.reps, date: r.date, workout_id: r.workout_id };
+      }
+      if (!bestReps || r.reps > bestReps.reps) {
+        bestReps = { reps: r.reps, weight: r.weight, date: r.date, workout_id: r.workout_id };
+      }
+    }
+    records.push({
+      exercise_id: list[0].exercise_id,
+      name: list[0].exercise_name,
+      muscle_group_id: list[0].muscle_group_id,
+      muscle_group_name: list[0].muscle_group_name,
+      has_weight: hasWeight,
+      heaviest: hasWeight ? heaviest : null,
+      best_e1rm: hasWeight ? bestE1rm : null,
+      best_reps: bestReps,
+      last_date: list[list.length - 1].date,
+    });
+  }
+  records.sort((a, b) => a.name.localeCompare(b.name));
+  return { has_data: true, records };
+}
+
 // ---------- Overview ----------
 
 export async function overview(today) {

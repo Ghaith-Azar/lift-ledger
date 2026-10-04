@@ -5,8 +5,18 @@ import { destroyCharts } from './charts.js';
 import { homeView } from './views/home.js';
 import { workoutView } from './views/workout.js';
 import { historyView } from './views/history.js';
-import { progressView, exerciseProgressView } from './views/progress.js';
+import { progressView, exerciseProgressView, recordsView } from './views/progress.js';
 import { splitView } from './views/split.js';
+// Imported for its side effects: registers the 'online' listener and
+// periodic retry that keep the offline set-logging queue draining no
+// matter which page is open.
+import './offlineSets.js';
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
 
 const app = document.getElementById('app');
 
@@ -14,6 +24,7 @@ const routes = [
   [/^#\/workout\/(\d+)$/, workoutView, 'train'],
   [/^#\/history$/, historyView, 'history'],
   [/^#\/progress\/exercise\/(\d+)$/, exerciseProgressView, 'progress'],
+  [/^#\/progress\/records$/, recordsView, 'progress'],
   [/^#\/progress$/, progressView, 'progress'],
   [/^#\/split$/, splitView, 'split'],
   [/^#?\/?$/, homeView, 'train'],

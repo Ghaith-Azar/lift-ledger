@@ -17,6 +17,17 @@ import {
 } from '../util.js';
 import { state, loadCatalog, activeGroups, exercisesOfGroup, plateColor, groupById } from '../state.js';
 import { groupChip, workoutTitle, suggestionChips } from './shared.js';
+import {
+  newTempId,
+  isTempId,
+  hasPendingFor,
+  pendingCount,
+  enqueueCreateSet,
+  enqueueUpdateSet,
+  enqueueArchiveSet,
+  updatePendingCreate,
+  subscribe as subscribeQueue,
+} from '../offlineSets.js';
 
 const LETTERS = 'ABCDEFGH';
 
@@ -29,6 +40,26 @@ export async function workoutView(container, [idParam]) {
   const root = h('div');
   const summary = h('div', { class: 'chips' });
   container.append(root);
+
+  // If some of this workout's changes are still queued from an earlier
+  // offline moment, re-render as they sync so the "pending" dots clear and,
+  // once the queue is fully drained, pull a fresh copy to self-heal any
+  // ordering edge case rather than trusting the optimistic local state forever.
+  let hadPending = false;
+  const unsubscribeQueue = subscribeQueue(async () => {
+    const pending = pendingCount();
+    if (pending === 0 && hadPending) {
+      hadPending = false;
+      try {
+        data = await api.get(`/api/workouts/${id}`);
+      } catch {
+        // Offline again before the refetch landed — next sync will retry this.
+      }
+    } else if (pending > 0) {
+      hadPending = true;
+    }
+    render();
+  });
 
   // ---------- Small helpers ----------
 
@@ -173,8 +204,17 @@ export async function workoutView(container, [idParam]) {
         updateSummary();
         if (res.pr) celebratePR(prMessage(e, res.pr));
       } catch (err) {
-        input.value = s[field] ?? '';
-        throw err;
+        if (err.status !== 0) {
+          input.value = s[field] ?? '';
+          throw err;
+        }
+        // Offline: save on the device and queue it. PR checks need the
+        // server's history, so that part just waits until it syncs.
+        s[field] = value;
+        updateSummary();
+        if (isTempId(s.id)) updatePendingCreate(s.id, { [field]: value });
+        else enqueueUpdateSet(s.id, { [field]: value });
+        render();
       }
     });
 
@@ -184,26 +224,79 @@ export async function workoutView(container, [idParam]) {
     return input;
   }
 
+  const nextSetNumber = (e) => e.sets.reduce((max, s) => Math.max(max, s.set_number), 0) + 1;
+  const nextDropIndex = (e, setNumber) =>
+    e.sets.filter((s) => s.set_number === setNumber).reduce((max, s) => Math.max(max, s.drop_index), 0) + 1;
+
   const addSet = act(async (e) => {
     const mains = e.sets.filter((s) => !s.archived && s.drop_index === 0);
     const last = mains[mains.length - 1];
-    const next = await api.post(
-      `/api/workout-exercises/${e.id}/sets`,
-      last ? { weight: last.weight, reps: last.reps } : {}
-    );
+    const body = last ? { weight: last.weight, reps: last.reps } : {};
     focus = { exId: e.id, field: last ? 'reps' : 'weight' };
-    return next;
+    try {
+      return await api.post(`/api/workout-exercises/${e.id}/sets`, body);
+    } catch (err) {
+      if (err.status !== 0) throw err;
+      const setNumber = nextSetNumber(e);
+      const targetId = newTempId();
+      e.sets.push({
+        id: targetId,
+        workout_exercise_id: e.id,
+        set_number: setNumber,
+        drop_index: 0,
+        weight: body.weight ?? null,
+        reps: body.reps ?? null,
+        archived: 0,
+      });
+      enqueueCreateSet({ targetId, workoutExerciseId: e.id, dropOf: null, setNumber, dropIndex: 0, ...body });
+      toast("Offline — this set will sync once you're back online", { variant: 'offline' });
+      return data;
+    }
   });
 
   const addDrop = act(async (e, s) => {
-    const next = await api.post(`/api/workout-exercises/${e.id}/sets`, { drop_of: s.set_number });
     focus = { exId: e.id, field: 'weight' };
-    return next;
+    try {
+      return await api.post(`/api/workout-exercises/${e.id}/sets`, { drop_of: s.set_number });
+    } catch (err) {
+      if (err.status !== 0) throw err;
+      const dropIndex = nextDropIndex(e, s.set_number);
+      const targetId = newTempId();
+      e.sets.push({
+        id: targetId,
+        workout_exercise_id: e.id,
+        set_number: s.set_number,
+        drop_index: dropIndex,
+        weight: null,
+        reps: null,
+        archived: 0,
+      });
+      enqueueCreateSet({ targetId, workoutExerciseId: e.id, dropOf: s.set_number, setNumber: s.set_number, dropIndex });
+      toast("Offline — this drop set will sync once you're back online", { variant: 'offline' });
+      return data;
+    }
   });
 
   const copyPrevious = act(async (e) => api.post(`/api/workout-exercises/${e.id}/copy-previous`));
 
-  const setArchived = act(async (s, archived) => api.patch(`/api/sets/${s.id}`, { archived }));
+  const setArchived = act(async (s, archived) => {
+    try {
+      return await api.patch(`/api/sets/${s.id}`, { archived });
+    } catch (err) {
+      if (err.status !== 0) throw err;
+      // Mirror the backend: archiving/restoring a main set carries its drops with it.
+      const we = data.exercises.find((ex) => ex.sets.includes(s));
+      s.archived = archived ? 1 : 0;
+      if (s.drop_index === 0 && we) {
+        for (const d of we.sets) {
+          if (d !== s && d.set_number === s.set_number) d.archived = archived ? 1 : 0;
+        }
+      }
+      enqueueArchiveSet(s.id, !!archived);
+      toast("Offline — will sync once you're back online", { variant: 'offline' });
+      return data;
+    }
+  });
 
   const removeSet = async (s, label) => {
     await setArchived(s, true);
@@ -214,16 +307,17 @@ export async function workoutView(container, [idParam]) {
     const isDrop = s.drop_index > 0;
     const prev = prevByKey.get(`${n}.${s.drop_index}`);
     const label = isDrop ? `Set ${n} drop ${s.drop_index}` : `Set ${n}`;
+    const pending = isTempId(s.id) || hasPendingFor(s.id);
 
     let weightHint = prev ? fmtNum(prev.weight) : '';
     if (!prev && isDrop && above?.weight) weightHint = fmtNum(Math.round(above.weight * 0.8 * 2) / 2);
 
     return h(
       'div',
-      { class: `set-row${isDrop ? ' drop' : ''}`, 'data-set-id': s.id },
+      { class: `set-row${isDrop ? ' drop' : ''}${pending ? ' pending' : ''}`, 'data-set-id': s.id },
       isDrop
-        ? h('span', { class: 'disc drop', title: 'Drop set' }, icon('down', 14))
-        : h('span', { class: 'disc' }, n),
+        ? h('span', { class: `disc drop${pending ? ' pending' : ''}`, title: 'Drop set' }, icon('down', 14))
+        : h('span', { class: `disc${pending ? ' pending' : ''}`, title: pending ? 'Waiting to sync' : undefined }, n),
       h('span', { class: 'prev' }, prev ? `${fmtNum(prev.weight)}×${prev.reps}` : '–'),
       numberInput(e, s, 'weight', weightHint, `${label} weight`),
       numberInput(e, s, 'reps', prev ? String(prev.reps) : '', `${label} reps`),
@@ -312,7 +406,13 @@ export async function workoutView(container, [idParam]) {
   }
 
   function exerciseMenu(e) {
+    const blocks = sectionBlocksFor(e.muscle_group_id);
+    const idx = blocks.findIndex((b) => b.members.some((m) => m.id === e.id));
+    const canMoveUp = idx > 0;
+    const canMoveDown = idx !== -1 && idx < blocks.length - 1;
     menuSheet(e.exercise_name, [
+      canMoveUp && { label: 'Move up', icon: 'up', onSelect: () => moveBlock(e, -1) },
+      canMoveDown && { label: 'Move down', icon: 'down', onSelect: () => moveBlock(e, 1) },
       { label: 'Superset with…', hint: 'Alternate sets between two exercises', icon: 'link', onSelect: () => openSupersetPicker(e) },
       e.superset_key != null && { label: 'Take out of superset', icon: 'x', onSelect: () => unlinkExercise(e) },
       { label: e.notes ? 'Edit note' : 'Add note', icon: 'edit', onSelect: () => editNote(e) },
@@ -417,6 +517,38 @@ export async function workoutView(container, [idParam]) {
     }
     return blocks;
   }
+
+  /** All blocks (single exercises or supersets) in the same muscle-group section as `e`, in display order. */
+  function sectionBlocksFor(groupId) {
+    return buildBlocks().filter((b) => b.members[0].muscle_group_id === groupId);
+  }
+
+  /**
+   * Move the whole block `e` belongs to up or down within its section, by
+   * swapping positions with the adjacent block. Supersets move as one unit.
+   * Reuses this section's own existing position numbers (just reassigned in
+   * the new order), so other sections are never touched.
+   */
+  const moveBlock = act(async (e, direction) => {
+    const blocks = sectionBlocksFor(e.muscle_group_id);
+    const idx = blocks.findIndex((b) => b.members.some((m) => m.id === e.id));
+    const target = idx + direction;
+    if (idx === -1 || target < 0 || target >= blocks.length) return null;
+
+    const reordered = [...blocks];
+    const [moved] = reordered.splice(idx, 1);
+    reordered.splice(target, 0, moved);
+
+    const slots = blocks.flatMap((b) => b.members.map((m) => m.position)).sort((a, b) => a - b);
+    const newFlat = reordered.flatMap((b) => b.members);
+    const updates = newFlat
+      .map((m, i) => ({ id: m.id, position: slots[i] }))
+      .filter((u, i) => u.position !== newFlat[i].position);
+
+    if (!updates.length) return null;
+    await Promise.all(updates.map((u) => api.patch(`/api/workout-exercises/${u.id}`, { position: u.position })));
+    return api.get(`/api/workouts/${id}`);
+  });
 
   function blockEl(block, sectionGroupId) {
     const { members } = block;
@@ -618,6 +750,23 @@ export async function workoutView(container, [idParam]) {
 
   // ---------- Render ----------
 
+  function offlineBanner() {
+    const pending = pendingCount();
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    if (!offline && !pending) return null;
+    return h(
+      'div',
+      { class: 'card row', style: { marginBottom: '12px', borderLeft: '4px solid var(--flat)' } },
+      h(
+        'span',
+        { class: 'grow' },
+        offline
+          ? "You're offline — sets are saved on this device and will sync automatically once you're back."
+          : `Syncing ${pluralize(pending, 'change')}…`
+      )
+    );
+  }
+
   function render() {
     const scrollY = window.scrollY;
     const { workout } = data;
@@ -670,6 +819,7 @@ export async function workoutView(container, [idParam]) {
               h('button', { class: 'btn small', onClick: () => patchWorkout({ archived: false }) }, 'Restore')
             )
           : null,
+        offlineBanner(),
         h('div', { class: 'workout-title' }, h('h1', {}, workoutTitle(workout))),
         h('div', { style: { margin: '10px 0 0' } }, summary),
         blockNodes,
@@ -699,4 +849,5 @@ export async function workoutView(container, [idParam]) {
   }
 
   render();
+  return unsubscribeQueue;
 }

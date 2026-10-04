@@ -1186,6 +1186,26 @@ textarea:focus {
   }
 }
 
+/* ---------- Offline sync ---------- */
+
+.toast.offline {
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: inset 0 0 0 2px var(--flat);
+}
+
+.disc.pending {
+  box-shadow: inset 0 0 0 2px var(--flat);
+}
+
+.disc.drop.pending {
+  box-shadow: 0 0 0 2px var(--flat);
+}
+
+.set-row.pending .num {
+  background: color-mix(in srgb, var(--flat) 10%, var(--surface-2));
+}
+
 /* ---------- Quick weight steppers ---------- */
 
 .stepper-row {

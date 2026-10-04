@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import {
   h,
   clear,
+  appendAll,
   icon,
   toast,
   safe,
@@ -76,6 +77,34 @@ function computeBalance(overview) {
   }
   flags.sort((a, b) => b.pct - a.pct);
   return { weeks, leader, flags };
+}
+
+/**
+ * Enough stalled lifts to suggest backing off: at least 3, or at least half
+ * of everything with enough history to have a verdict (building/inactive
+ * lifts don't count either way — there is not enough signal yet).
+ */
+function computeDeload(overview) {
+  if (!overview.has_data) return null;
+  const tracked = overview.lifts.filter((l) => ['progressing', 'plateau', 'regressing'].includes(l.status));
+  if (tracked.length < 2) return null;
+  const stalled = tracked.filter((l) => l.status === 'plateau' || l.status === 'regressing');
+  if (stalled.length < 3 && stalled.length / tracked.length < 0.5) return null;
+  return { stalled, total: tracked.length };
+}
+
+function deloadCard(overview) {
+  const result = computeDeload(overview);
+  if (!result) return null;
+  const names = result.stalled.map((l) => l.name);
+  const shown = names.slice(0, 4).join(', ') + (names.length > 4 ? `, +${names.length - 4} more` : '');
+  return h(
+    'div',
+    { class: 'card', style: { borderLeft: '4px solid var(--flat)' } },
+    h('p', { style: { fontWeight: 700 } }, `${pluralize(result.stalled.length, 'lift')} plateaued or regressing`),
+    h('p', { class: 'muted small', style: { margin: '4px 0 8px' } }, `${shown} — out of ${result.total} lifts with enough history to judge.`),
+    h('p', { class: 'small' }, 'Might be worth a lighter week before pushing again: same exercises, less weight or fewer sets, then back to normal.')
+  );
 }
 
 function balanceCard(overview) {
@@ -442,7 +471,17 @@ export async function progressView(container) {
     const balance = balanceCard(overview);
     if (balance) root.append(balance);
 
-    root.append(h('h2', { class: 'section-title' }, 'Your lifts'));
+    const deload = deloadCard(overview);
+    if (deload) root.append(deload);
+
+    root.append(
+      h(
+        'div',
+        { class: 'row between', style: { margin: '24px 0 10px' } },
+        h('h2', { style: { fontSize: '24px', margin: 0 } }, 'Your lifts'),
+        h('a', { href: '#/progress/records', class: 'small', style: { color: 'var(--accent-text)', fontWeight: 700 } }, '🏆 Records')
+      )
+    );
     if (!overview.lifts.length) {
       root.append(h('p', { class: 'muted' }, 'Log some sets and each exercise will get its own trend line.'));
     }
@@ -508,6 +547,82 @@ const METRIC_DIGITS = { top_weight: 1, best_e1rm: 1, avg_reps: 1, best_reps: 0, 
 function fmtMetric(v, key) {
   if (v === null || v === undefined) return '–';
   return `${fmtNum(v, METRIC_DIGITS[key])} ${METRIC_UNIT[key]()}`;
+}
+
+function recordRow(r) {
+  const lines = [];
+  if (r.heaviest) lines.push(`Heaviest ${fmtNum(r.heaviest.weight)} × ${r.heaviest.reps}`);
+  if (r.best_e1rm) lines.push(`Est. 1RM ${fmtNum(r.best_e1rm.value)} ${state.unit}`);
+  if (!r.has_weight && r.best_reps) lines.push(`Best ${r.best_reps.reps} reps`);
+  return h(
+    'a',
+    { class: 'lift-row', href: `#/progress/exercise/${r.exercise_id}`, style: { '--plate': plateColor(r.muscle_group_id) } },
+    h(
+      'div',
+      { class: 'grow' },
+      h('h3', {}, r.name),
+      h('div', { class: 'row wrap', style: { marginTop: '4px', gap: '6px' } }, groupChip(r.muscle_group_id))
+    ),
+    h(
+      'div',
+      { style: { textAlign: 'right' } },
+      lines.map((l) => h('div', { class: 'small', style: { fontWeight: 700 } }, l))
+    )
+  );
+}
+
+export async function recordsView(container) {
+  const data = await api.get('/api/progress/records');
+  const root = h('div');
+  container.append(root);
+
+  if (!data.has_data) {
+    root.append(
+      h('a', { class: 'icon-btn', href: '#/progress', 'aria-label': 'Back to progress' }, icon('back', 24)),
+      h(
+        'div',
+        { class: 'empty' },
+        h('h2', {}, 'No records yet'),
+        h('p', {}, 'Log a few sets and your personal bests will show up here, one line per exercise.')
+      )
+    );
+    return;
+  }
+
+  let filterGroup = null;
+  const groups = [...new Map(data.records.map((r) => [r.muscle_group_id, r.muscle_group_name])).entries()];
+
+  function render() {
+    const list = filterGroup ? data.records.filter((r) => r.muscle_group_id === filterGroup) : data.records;
+    appendAll(clear(root), [
+      h('a', { class: 'icon-btn', href: '#/progress', 'aria-label': 'Back to progress' }, icon('back', 24)),
+      h(
+        'div',
+        { class: 'page-head' },
+        h('div', {}, h('h1', {}, '🏆 Personal Records'), h('p', {}, pluralize(data.records.length, 'exercise')))
+      ),
+      h(
+        'div',
+        { class: 'chips', style: { marginBottom: '14px' } },
+        h('button', { class: 'chip', 'aria-pressed': String(filterGroup === null), onClick: () => { filterGroup = null; render(); } }, 'All'),
+        groups.map(([gid, name]) =>
+          h(
+            'button',
+            {
+              class: 'chip',
+              style: { '--plate': plateColor(gid) },
+              'aria-pressed': String(filterGroup === gid),
+              onClick: () => { filterGroup = gid; render(); },
+            },
+            h('span', { class: 'dot' }),
+            name
+          )
+        )
+      ),
+      list.map(recordRow),
+    ]);
+  }
+  render();
 }
 
 export async function exerciseProgressView(container, [idParam]) {

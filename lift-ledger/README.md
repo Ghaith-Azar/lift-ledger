@@ -35,6 +35,19 @@ JSON API. Charts are drawn with Chart.js.
 - **Muscle balance** — compares each muscle group's sets over the last 4 weeks with your
   most-trained group and flags any that are 30%+ behind or missing. Uses sets rather than
   volume so heavy compound lifts don't skew it.
+- **Personal records** — a 🏆 Records page (linked from Progress) listing your current best
+  on every exercise at once — heaviest set, best estimated 1RM, or best reps for bodyweight
+  moves — filterable by muscle group.
+- **Deload nudge** — a banner on Progress when 3+ lifts (or half of everything with enough
+  history) are plateaued or regressing, naming them and suggesting a lighter week.
+- **Reorder exercises** — "Move up" / "Move down" in an exercise's ⋯ menu, scoped to its
+  own muscle-group section. Supersets move as one block.
+- **Works with no signal.** The app installs as an offline-capable PWA: the app shell and
+  your last-loaded data are cached, and logging, editing or removing sets while offline
+  queues those changes (shown with a small gold ring) and syncs automatically the moment
+  you're back online — in the order you made them, never reordered or dropped. Everything
+  else (adding exercises, editing the split) needs a connection, since faking those safely
+  offline is a lot riskier than it looks.
 - **Nothing is ever deleted.** Removing a set or exercise archives it (with an
   undo toast on the spot); the database itself has triggers that refuse `DELETE`
   statements outright. Every edit is written to an `edit_log` table with the
@@ -53,8 +66,10 @@ src/
   routes/         catalog.js (split/exercises), workouts.js (logging), progress.js
 public/
   index.html
+  sw.js           Service worker: caches the app shell for offline loading
   css/styles.css
-  js/             main.js (router), views/, api.js, state.js, charts.js, util.js
+  js/             main.js (router), views/, api.js, state.js, charts.js, util.js,
+                  offlineSets.js (offline set-logging queue), exerciseLibrary.js
 ```
 
 ## Running it locally
