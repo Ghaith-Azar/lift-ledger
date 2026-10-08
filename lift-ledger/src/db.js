@@ -138,6 +138,20 @@ const TABLES = [
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  // Not in PROTECTED_TABLES on purpose: these are device/app bookkeeping,
+  // not workout history, so they can be cleaned up freely (a dead push
+  // subscription gets deleted outright rather than archived).
+  `CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  )`,
   `CREATE TABLE IF NOT EXISTS edit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     table_name TEXT NOT NULL,
@@ -205,4 +219,10 @@ export async function resetAll() {
     // sqlite_sequence may not exist yet on a brand new database — fine either way.
   }
   await migrate();
+
+  // Not workout data, but a full reset should still leave a genuinely clean slate.
+  await batch([
+    { sql: 'DELETE FROM push_subscriptions' },
+    { sql: 'DELETE FROM app_settings' },
+  ]);
 }

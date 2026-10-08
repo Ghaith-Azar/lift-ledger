@@ -17,7 +17,8 @@ import {
 } from '../util.js';
 import { state, setUnit, plateColor } from '../state.js';
 import { drawChart, destroyCharts, colors } from '../charts.js';
-import { groupChip, sparkline, trendBadge } from './shared.js';
+import { groupChip, sparkline, trendBadge, bodyweightForm, signedWeight } from './shared.js';
+import { pushSupported, currentSubscription, subscribeToPush, unsubscribeFromPush } from '../push.js';
 
 function deltaBadge(pct) {
   if (pct === null || pct === undefined) return null;
@@ -136,75 +137,147 @@ function balanceCard(overview) {
 // ---------- Bodyweight ----------
 
 /** Resolves with { date, weight, notes }, or null if dismissed. */
-function bodyweightForm(existing) {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = (value, close) => {
-      if (done) return;
-      done = true;
-      close();
-      resolve(value);
-    };
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const pad2 = (n) => String(n).padStart(2, '0');
 
-    openSheet({
-      title: existing ? 'Edit weigh-in' : 'Log weight',
-      onClose: () => {
-        if (!done) {
-          done = true;
-          resolve(null);
-        }
-      },
-      body: (close) => {
-        const date = h('input', { type: 'date', value: existing?.date || todayStr(), 'aria-label': 'Date' });
-        const weight = h('input', {
-          type: 'text',
-          inputmode: 'decimal',
-          autocomplete: 'off',
-          placeholder: state.unit,
-          value: existing ? fmtNum(existing.weight, 2) : '',
-          'aria-label': `Weight in ${state.unit}`,
-        });
-        const note = h('input', {
-          type: 'text',
-          maxlength: 300,
-          placeholder: 'e.g. morning, after training',
-          value: existing?.notes || '',
-          'aria-label': 'Note',
-        });
-        const submit = () => {
-          const value = Number(weight.value.trim().replace(',', '.'));
-          if (!date.value) return toast('Pick a date', { error: true });
-          if (!weight.value.trim() || !Number.isFinite(value) || value <= 0 || value > 700) {
-            return toast('Enter a valid weight', { error: true });
-          }
-          finish({ date: date.value, weight: value, notes: note.value.trim() || null }, close);
-        };
-        weight.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
-        return h(
-          'div',
-          { class: 'stack' },
-          h('label', { class: 'field-label' }, 'Date'),
-          date,
-          h('label', { class: 'field-label' }, `Weight (${state.unit})`),
-          weight,
-          h('label', { class: 'field-label' }, 'Note (optional)'),
-          note,
-          h('button', { class: 'btn primary block', onClick: submit }, existing ? 'Save' : 'Log weight')
-        );
-      },
+function openReminderSheet() {
+  const body = h('div');
+
+  async function paint() {
+    body.replaceChildren(h('p', { class: 'muted' }, 'Loading…'));
+
+    if (!pushSupported()) {
+      body.replaceChildren(h('p', {}, "This browser doesn't support push notifications. The in-app reminder on Train still works."));
+      return;
+    }
+
+    const [settings, sub] = await Promise.all([api.get('/api/push/settings'), currentSubscription()]);
+
+    if (!settings.configured) {
+      body.replaceChildren(
+        h('p', {}, "Push isn't set up on this server yet — it needs a one-time key pair (see the README's “Weekly reminders” section)."),
+        h('p', { class: 'muted small' }, "Once that's done this device can turn reminders on.")
+      );
+      return;
+    }
+
+    if (!sub) {
+      body.replaceChildren(
+        h('p', {}, "Get a notification on this device once a week if you haven't logged your weight yet."),
+        h(
+          'button',
+          {
+            class: 'btn primary block',
+            onClick: safe(async () => {
+              await subscribeToPush();
+              toast('Reminders turned on for this device');
+              await paint();
+            }),
+          },
+          'Turn on for this device'
+        )
+      );
+      return;
+    }
+
+    const dayChips = h(
+      'div',
+      { class: 'chips' },
+      DAY_NAMES.map((name, i) =>
+        h(
+          'button',
+          {
+            class: 'chip',
+            'aria-pressed': String(settings.day === i),
+            onClick: safe(async () => {
+              await api.patch('/api/push/settings', { day: i });
+              await paint();
+            }),
+          },
+          name.slice(0, 3)
+        )
+      )
+    );
+    const hourInput = h('input', {
+      type: 'number',
+      min: 0,
+      max: 23,
+      value: settings.hour,
+      style: { maxWidth: '90px' },
+      'aria-label': 'Reminder hour, UTC',
     });
-  });
-}
+    hourInput.addEventListener(
+      'change',
+      safe(async () => {
+        const hr = Number(hourInput.value);
+        if (!Number.isInteger(hr) || hr < 0 || hr > 23) return toast('Hour must be 0-23', { error: true });
+        await api.patch('/api/push/settings', { hour: hr });
+        toast('Saved');
+      })
+    );
 
-/** Weight going up or down is not good or bad by itself, so no green/red here. */
-const signed = (n) => `${n > 0 ? '+' : ''}${fmtNum(n, 1)} ${state.unit}`;
+    body.replaceChildren(
+      h(
+        'p',
+        { class: 'row' },
+        h('span', { class: 'badge up' }, 'On for this device'),
+        h('span', { class: 'muted small' }, ` · ${pluralize(settings.subscription_count, 'device')} subscribed`)
+      ),
+      h('label', { class: 'field-label', style: { marginTop: '10px' } }, 'Remind on'),
+      dayChips,
+      h(
+        'div',
+        { class: 'row', style: { marginTop: '10px', alignItems: 'center', gap: '10px' } },
+        h('label', { class: 'field-label' }, 'At (UTC hour)'),
+        hourInput
+      ),
+      h(
+        'p',
+        { class: 'muted small', style: { margin: '8px 0 14px' } },
+        `Skipped automatically if you've already logged a weigh-in that week. Next check: ${DAY_NAMES[settings.day]}, ${pad2(settings.hour)}:00 UTC.`
+      ),
+      h(
+        'button',
+        {
+          class: 'btn block',
+          onClick: safe(async () => {
+            const res = await api.post('/api/push/test', {});
+            toast(res.sent ? 'Test notification sent' : 'Could not send — check the server logs');
+          }),
+        },
+        'Send a test notification'
+      ),
+      h(
+        'button',
+        {
+          class: 'btn danger block',
+          style: { marginTop: '8px' },
+          onClick: safe(async () => {
+            await unsubscribeFromPush();
+            toast('Reminders turned off for this device');
+            await paint();
+          }),
+        },
+        'Turn off for this device'
+      )
+    );
+  }
+
+  openSheet({ title: 'Weekly reminder', body: () => body });
+  paint();
+}
 
 function bodyweightCard(bw, { onLog, onEntry }) {
   const head = h(
     'div',
     { class: 'row between' },
     h('h3', {}, 'Bodyweight'),
-    h('button', { class: 'btn small', onClick: onLog }, icon('plus', 16), 'Log')
+    h(
+      'div',
+      { class: 'row', style: { gap: '6px' } },
+      h('button', { class: 'btn small', onClick: openReminderSheet, 'aria-label': 'Weekly reminder settings' }, '🔔'),
+      h('button', { class: 'btn small', onClick: onLog }, icon('plus', 16), 'Log')
+    )
   );
 
   if (!bw.has_data) {
@@ -235,10 +308,10 @@ function bodyweightCard(bw, { onLog, onEntry }) {
         h('div', { class: 'muted small' }, `Latest, ${fmtDate(bw.latest.date)}`)
       ),
       bw.recent_change !== null
-        ? h('div', {}, h('span', { class: 'badge' }, signed(bw.recent_change)), h('div', { class: 'muted small', style: { marginTop: '4px' } }, 'last 7 vs the 7 before'))
+        ? h('div', {}, h('span', { class: 'badge' }, signedWeight(bw.recent_change)), h('div', { class: 'muted small', style: { marginTop: '4px' } }, 'last 7 vs the 7 before'))
         : null,
       bw.entries.length > 1
-        ? h('div', {}, h('span', { class: 'badge' }, signed(bw.change_total)), h('div', { class: 'muted small', style: { marginTop: '4px' } }, `since ${fmtDate(bw.first.date, { weekday: false })}`))
+        ? h('div', {}, h('span', { class: 'badge' }, signedWeight(bw.change_total)), h('div', { class: 'muted small', style: { marginTop: '4px' } }, `since ${fmtDate(bw.first.date, { weekday: false })}`))
         : null
     ),
     bw.entries.length > 1

@@ -42,6 +42,11 @@ JSON API. Charts are drawn with Chart.js.
   history) are plateaued or regressing, naming them and suggesting a lighter week.
 - **Reorder exercises** — "Move up" / "Move down" in an exercise's ⋯ menu, scoped to its
   own muscle-group section. Supersets move as one block.
+- **Weekly weigh-in reminders, two ways.** A banner on the Train tab shows up on its own —
+  no setup — any time it's been a week (or you've never logged one). Tap the 🔔 on the
+  Bodyweight card for an actual push notification once a week too, even with the app
+  closed; it skips itself automatically if you've already logged that week. The push half
+  needs a one-time setup (see "Weekly reminders" below) — the banner works regardless.
 - **Works with no signal.** The app installs as an offline-capable PWA: the app shell and
   your last-loaded data are cached, and logging, editing or removing sets while offline
   queues those changes (shown with a small gold ring) and syncs automatically the moment
@@ -66,10 +71,13 @@ src/
   routes/         catalog.js (split/exercises), workouts.js (logging), progress.js
 public/
   index.html
-  sw.js           Service worker: caches the app shell for offline loading
+  sw.js           Service worker: app-shell caching + push notification handling
   css/styles.css
   js/             main.js (router), views/, api.js, state.js, charts.js, util.js,
-                  offlineSets.js (offline set-logging queue), exerciseLibrary.js
+                  offlineSets.js (offline set-logging queue), push.js (subscribe/
+                  unsubscribe), exerciseLibrary.js
+scripts/
+  generate-vapid-keys.js   One-time key pair for push notifications
 ```
 
 ## Running it locally
@@ -135,6 +143,49 @@ The app is a small installable web app (manifest + icon included). On iOS
 Safari: Share → **Add to Home Screen**. On Android Chrome: menu → **Install
 app**. It then opens full-screen, without browser chrome, like a native app.
 
+## Weekly reminders
+
+The in-app banner on the Train tab needs nothing — it just shows up when it's due. Real
+push notifications (the 🔔 on the Bodyweight card) need a one-time setup:
+
+1. **Generate a key pair.** From the project folder:
+   ```bash
+   npm run vapid:generate
+   ```
+   This prints `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and a `VAPID_SUBJECT` line (put
+   your own email in that one). Add all three to Render's environment variables. These
+   identify *your server* to the push services (Chrome's, Firefox's, etc.) — generate your
+   own rather than reusing someone else's, and keep the private key secret.
+2. **Redeploy**, then open the app, go to **Progress**, tap **🔔** on the Bodyweight card,
+   and **Turn on for this device**. Your browser will ask for notification permission.
+3. Use **Send a test notification** in that same sheet to confirm it actually arrives
+   before waiting for the real schedule.
+
+**Getting the weekly check to actually run.** The server checks "is it time, and have I
+not already sent this week" every 30 minutes on its own — but Render's free tier puts your
+instance to sleep after 15 minutes of no traffic, and a sleeping instance obviously can't
+check anything. Two ways to handle this, from least to most effort:
+
+- **Do nothing.** If you (or anything else) happen to open the app around your chosen
+  day/time, that request wakes the instance and the in-process check runs. Fine if you're
+  not fussed about precise timing.
+- **Add `CRON_SECRET`** (any random string) to your environment, and point a free external
+  scheduler — [cron-job.org](https://cron-job.org), a
+  [GitHub Actions scheduled workflow](https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#schedule),
+  UptimeRobot, etc. — at:
+  ```
+  POST https://your-app.onrender.com/api/push/trigger?secret=YOUR_CRON_SECRET
+  ```
+  once a week, a little after the day/time you picked in the app. This also happens to
+  wake a sleeping instance right when it's needed. Without `CRON_SECRET` set, this endpoint
+  doesn't exist at all (404), so there's no unauthenticated endpoint sitting around by
+  accident.
+- **Upgrade off the free tier** so the instance never sleeps, and skip the external
+  scheduler entirely.
+
+Notification timing is in UTC (there's no per-device timezone to go by on the server side)
+— pick the day and hour from the sheet with that in mind.
+
 ## Notes on a couple of design choices
 
 - **Weeks start Monday** and are used everywhere trends are computed, so a
@@ -150,3 +201,6 @@ app**. It then opens full-screen, without browser chrome, like a native app.
 - A **drop set** is stored as extra rows sharing the same set number as the
   set they dropped from (`drop_index` 1, 2, 3…), so archiving or restoring
   the main set carries its drops along with it automatically.
+- The weekly reminder **skips itself if you've already logged a weigh-in that
+  week** (Monday-based, same as everything else) — it's there to close the
+  gap, not to nag once you've already done the thing.

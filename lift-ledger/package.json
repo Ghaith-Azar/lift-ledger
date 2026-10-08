@@ -9,11 +9,13 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "vapid:generate": "node scripts/generate-vapid-keys.js"
   },
   "dependencies": {
     "@libsql/client": "^0.18.0",
     "chart.js": "^4.5.1",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "web-push": "^3.6.7"
   }
 }

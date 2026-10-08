@@ -8,6 +8,8 @@ import { workoutsRouter } from './routes/workouts.js';
 import { progressRouter } from './routes/progress.js';
 import { adminRouter } from './routes/admin.js';
 import { bodyweightRouter } from './routes/bodyweight.js';
+import { pushRouter } from './routes/push.js';
+import { pushConfigured, checkAndSendReminder, startScheduler } from './push.js';
 import { HttpError } from './validate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -35,8 +37,24 @@ app.use(express.json({ limit: '200kb' }));
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
+// Deliberately registered before the auth middleware: an external cron
+// service (no browser, no session cookie) hits this to trigger the weekly
+// check. It's its own gate — a shared secret, not the app password — and
+// refuses to run at all unless that secret is actually set.
+app.post('/api/push/trigger', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return res.status(404).json({ error: 'Not found' });
+  const supplied = req.headers['x-cron-secret'] || req.query.secret;
+  if (supplied !== secret) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    res.json(await checkAndSendReminder());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.use('/api/auth', authRouter);
-app.use('/api', requireAuth, catalogRouter, workoutsRouter, progressRouter, bodyweightRouter, adminRouter);
+app.use('/api', requireAuth, catalogRouter, workoutsRouter, progressRouter, bodyweightRouter, pushRouter, adminRouter);
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
 app.use('/vendor/chart.js', express.static(path.join(root, 'node_modules/chart.js/dist')));
@@ -56,4 +74,10 @@ const port = Number(process.env.PORT) || 3000;
 await migrate();
 app.listen(port, '0.0.0.0', () => {
   console.log(`Lift Ledger running on port ${port} (${usingTurso ? 'Turso' : 'local SQLite file'})`);
+  if (pushConfigured) {
+    startScheduler();
+    console.log('Weight-reminder push notifications are configured and scheduled.');
+  } else {
+    console.log('Weight-reminder push notifications are not configured (VAPID env vars not set) — skipping.');
+  }
 });

@@ -1,7 +1,34 @@
 import { api } from '../api.js';
-import { h, safe, todayStr, fmtDate, mondayOf } from '../util.js';
+import { h, safe, toast, todayStr, fmtDate, mondayOf } from '../util.js';
 import { activeDays, plateColor } from '../state.js';
-import { groupChip, workoutCard, workoutTitle } from './shared.js';
+import { groupChip, workoutCard, workoutTitle, bodyweightForm, daysSinceWeighIn } from './shared.js';
+
+function weighInBanner(bw) {
+  const days = daysSinceWeighIn(bw);
+  if (days !== null && days < 7) return null;
+
+  const message = days === null ? "You haven't logged your weight yet." : `It's been ${days} days since your last weigh-in.`;
+  const banner = h(
+    'div',
+    { class: 'card row', style: { marginBottom: '14px', borderLeft: '4px solid var(--flat)' } },
+    h('span', { class: 'grow' }, message),
+    h(
+      'button',
+      {
+        class: 'btn small',
+        onClick: safe(async () => {
+          const entry = await bodyweightForm();
+          if (!entry) return;
+          await api.post('/api/bodyweight', entry);
+          toast('Weight logged');
+          banner.remove();
+        }),
+      },
+      'Log weight'
+    )
+  );
+  return banner;
+}
 
 /** The day after the one you trained most recently, wrapping around the split. */
 function nextDay(days, workouts) {
@@ -12,7 +39,10 @@ function nextDay(days, workouts) {
 }
 
 export async function homeView(container) {
-  const { workouts } = await api.get('/api/workouts?limit=40');
+  const [{ workouts }, bw] = await Promise.all([
+    api.get('/api/workouts?limit=40'),
+    api.get('/api/progress/bodyweight'),
+  ]);
   const days = activeDays();
   const today = todayStr();
 
@@ -54,6 +84,9 @@ export async function homeView(container) {
       thisWeek ? h('span', { class: 'chip' }, `${thisWeek} this week`) : null
     ),
   ];
+
+  const banner = weighInBanner(bw);
+  if (banner) parts.push(banner);
 
   if (todays) {
     parts.push(

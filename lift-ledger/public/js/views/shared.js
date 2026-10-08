@@ -1,4 +1,4 @@
-import { h, icon, fmtDate, relDay, fmtVolume, pluralize } from '../util.js';
+import { h, icon, openSheet, toast, fmtDate, fmtNum, relDay, fmtVolume, pluralize, todayStr } from '../util.js';
 import { state, groupById, plateColor } from '../state.js';
 import { suggestionsFor } from '../exerciseLibrary.js';
 
@@ -98,6 +98,82 @@ export function suggestionChips(groupName, existingNames, onPick) {
       names.map((name) => h('button', { class: 'chip', onClick: () => onPick(name) }, icon('plus', 14), name))
     )
   );
+}
+
+// ---------- Bodyweight ----------
+
+/** Resolves with { date, weight, notes }, or null if dismissed. Shared so
+ *  both the Progress page and the Train-page reminder banner can log a
+ *  weigh-in without a detour through Progress. */
+export function bodyweightForm(existing) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (value, close) => {
+      if (done) return;
+      done = true;
+      close();
+      resolve(value);
+    };
+
+    openSheet({
+      title: existing ? 'Edit weigh-in' : 'Log weight',
+      onClose: () => {
+        if (!done) {
+          done = true;
+          resolve(null);
+        }
+      },
+      body: (close) => {
+        const date = h('input', { type: 'date', value: existing?.date || todayStr(), 'aria-label': 'Date' });
+        const weight = h('input', {
+          type: 'text',
+          inputmode: 'decimal',
+          autocomplete: 'off',
+          placeholder: state.unit,
+          value: existing ? fmtNum(existing.weight, 2) : '',
+          'aria-label': `Weight in ${state.unit}`,
+        });
+        const note = h('input', {
+          type: 'text',
+          maxlength: 300,
+          placeholder: 'e.g. morning, after training',
+          value: existing?.notes || '',
+          'aria-label': 'Note',
+        });
+        const submit = () => {
+          const value = Number(weight.value.trim().replace(',', '.'));
+          if (!date.value) return toast('Pick a date', { error: true });
+          if (!weight.value.trim() || !Number.isFinite(value) || value <= 0 || value > 700) {
+            return toast('Enter a valid weight', { error: true });
+          }
+          finish({ date: date.value, weight: value, notes: note.value.trim() || null }, close);
+        };
+        weight.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
+        return h(
+          'div',
+          { class: 'stack' },
+          h('label', { class: 'field-label' }, 'Date'),
+          date,
+          h('label', { class: 'field-label' }, `Weight (${state.unit})`),
+          weight,
+          h('label', { class: 'field-label' }, 'Note (optional)'),
+          note,
+          h('button', { class: 'btn primary block', onClick: submit }, existing ? 'Save' : 'Log weight')
+        );
+      },
+    });
+  });
+}
+
+/** Weight going up or down is not good or bad by itself, so no green/red here. */
+export const signedWeight = (n) => `${n > 0 ? '+' : ''}${fmtNum(n, 1)} ${state.unit}`;
+
+/** Days since the last weigh-in, or null if none has ever been logged. */
+export function daysSinceWeighIn(bw) {
+  if (!bw?.has_data) return null;
+  const today = new Date(`${todayStr()}T00:00:00`);
+  const last = new Date(`${bw.latest.date}T00:00:00`);
+  return Math.round((today - last) / 86400000);
 }
 
 /** progressing / regressing / plateau / building / inactive → a small coloured badge. */
