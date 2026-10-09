@@ -42,6 +42,11 @@ JSON API. Charts are drawn with Chart.js.
   history) are plateaued or regressing, naming them and suggesting a lighter week.
 - **Reorder exercises** — "Move up" / "Move down" in an exercise's ⋯ menu, scoped to its
   own muscle-group section. Supersets move as one block.
+- **Workout timer** — the clock starts the moment you start a workout and shows a live
+  ticking time on the workout page; tap **End workout** to stop it. Progress shows your
+  average session length week by week, plus your longest. Forgot to tap End? Fix it in
+  the workout's ⋯ menu → **Edit times** — sessions over 4 hours are assumed to be a
+  forgotten tap and left out of the average (but still shown, and correctable).
 - **Weekly weigh-in reminders, two ways.** A banner on the Train tab shows up on its own —
   no setup — any time it's been a week (or you've never logged one). Tap the 🔔 on the
   Bodyweight card for an actual push notification once a week too, even with the app

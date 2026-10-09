@@ -412,6 +412,20 @@ textarea:focus {
   margin-top: 10px;
 }
 
+.timer-bar {
+  color: var(--muted);
+}
+
+.timer-bar.live {
+  border-left: 4px solid var(--accent);
+}
+
+.timer-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--text);
+}
+
 .chip {
   display: inline-flex;
   align-items: center;

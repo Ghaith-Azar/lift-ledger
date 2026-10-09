@@ -13,6 +13,7 @@ import {
   fmtNum,
   fmtVolume,
   fmtWeek,
+  fmtDuration,
   pluralize,
 } from '../util.js';
 import { state, setUnit, plateColor } from '../state.js';
@@ -367,6 +368,94 @@ function drawBodyweightChart(host, bw) {
   });
 }
 
+// ---------- Workout duration ----------
+
+function durationCard(duration) {
+  if (!duration?.has_data) return null;
+
+  const notes = [];
+  if (duration.open_workouts) {
+    notes.push(`${pluralize(duration.open_workouts, 'workout')} still missing an end time`);
+  }
+  if (duration.excluded_implausible) {
+    notes.push(
+      `${pluralize(duration.excluded_implausible, 'session')} left out of the average (over 4 hours — probably a forgotten "End workout" tap)`
+    );
+  }
+
+  if (!duration.sessions_with_duration) {
+    return h(
+      'div',
+      { class: 'chart-card' },
+      h('h3', {}, 'Workout duration'),
+      h('p', {}, 'Once a workout has both a start and an end time, your average session length will show up here.'),
+      notes.length ? h('p', { class: 'muted small', style: { marginTop: '8px' } }, notes.join(' · ')) : null
+    );
+  }
+
+  return h(
+    'div',
+    { class: 'chart-card' },
+    h('h3', {}, 'Workout duration'),
+    h('p', {}, 'How long your sessions run, week by week.'),
+    h(
+      'div',
+      { class: 'row wrap', style: { gap: '4px 16px', margin: '6px 0 8px', alignItems: 'flex-end' } },
+      h(
+        'div',
+        {},
+        h(
+          'div',
+          { style: { fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '36px', lineHeight: 1 } },
+          fmtDuration(duration.avg_minutes)
+        ),
+        h('div', { class: 'muted small' }, 'Average session')
+      ),
+      duration.trend_pct !== null
+        ? h(
+            'div',
+            {},
+            deltaBadge(duration.trend_pct),
+            h('div', { class: 'muted small', style: { marginTop: '4px' } }, 'last 5 vs the 5 before')
+          )
+        : null,
+      duration.longest
+        ? h(
+            'div',
+            {},
+            h('span', { class: 'badge' }, fmtDuration(duration.longest.minutes)),
+            h('div', { class: 'muted small', style: { marginTop: '4px' } }, 'longest')
+          )
+        : null
+    ),
+    h('div', { class: 'chart-box' }),
+    notes.length ? h('p', { class: 'muted small', style: { marginTop: '10px' } }, notes.join(' · ')) : null
+  );
+}
+
+function drawDurationChart(host, duration) {
+  const c = colors();
+  drawChart(host, {
+    type: 'line',
+    data: {
+      labels: duration.weeks.map(fmtWeek),
+      datasets: [
+        {
+          label: 'Avg minutes',
+          data: duration.series,
+          borderColor: c.a,
+          backgroundColor: c.a,
+          borderWidth: 3,
+          pointRadius: duration.series.map((v) => (v === null ? 0 : 3)),
+          pointHoverRadius: 5,
+          tension: 0.3,
+          spanGaps: true,
+        },
+      ],
+    },
+  });
+}
+
 // ---------- Overview ----------
 
 export async function progressView(container) {
@@ -374,9 +463,14 @@ export async function progressView(container) {
   container.append(root);
   let overview;
   let bw;
+  let duration;
 
   const load = async () => {
-    [overview, bw] = await Promise.all([api.get('/api/progress/overview'), api.get('/api/progress/bodyweight')]);
+    [overview, bw, duration] = await Promise.all([
+      api.get('/api/progress/overview'),
+      api.get('/api/progress/bodyweight'),
+      api.get('/api/progress/duration'),
+    ]);
   };
   const refresh = async () => {
     await load();
@@ -473,6 +567,13 @@ export async function progressView(container) {
     root.append(bwCard);
     const bwBox = bwCard.querySelector('.chart-box');
     if (bwBox) drawBodyweightChart(bwBox, bw);
+
+    const durCard = durationCard(duration);
+    if (durCard) {
+      root.append(durCard);
+      const durBox = durCard.querySelector('.chart-box');
+      if (durBox) drawDurationChart(durBox, duration);
+    }
 
     if (!overview.has_data) {
       root.append(

@@ -13,6 +13,8 @@ import {
   relDay,
   fmtNum,
   fmtVolume,
+  fmtClock,
+  fmtDuration,
   pluralize,
 } from '../util.js';
 import { state, loadCatalog, activeGroups, exercisesOfGroup, plateColor, groupById } from '../state.js';
@@ -36,6 +38,14 @@ export async function workoutView(container, [idParam]) {
   let data = await api.get(`/api/workouts/${id}`);
   let showRemoved = false;
   let focus = null; // { exId, field }
+  let timerInterval = null;
+
+  const clearTimer = () => {
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+  };
 
   const root = h('div');
   const summary = h('div', { class: 'chips' });
@@ -665,6 +675,61 @@ export async function workoutView(container, [idParam]) {
 
   const patchWorkout = act(async (patch) => api.patch(`/api/workouts/${id}`, patch));
 
+  const endWorkout = act(async () => api.post(`/api/workouts/${id}/end`));
+
+  // Local <-> input[type=datetime-local] conversion. datetime-local has no
+  // timezone of its own — it's read and written in the browser's local time,
+  // which is exactly what someone correcting "I actually started at 6pm" wants.
+  const toLocalInput = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const fromLocalInput = (value) => (value ? new Date(value).toISOString() : null);
+
+  function editTimesSheet() {
+    const { workout } = data;
+    const startInput = h('input', {
+      type: 'datetime-local',
+      value: toLocalInput(workout.started_at),
+      'aria-label': 'Workout start time',
+    });
+    const endInput = h('input', {
+      type: 'datetime-local',
+      value: toLocalInput(workout.ended_at),
+      'aria-label': 'Workout end time',
+    });
+    // Not routed through patchWorkout()/act(): a validation error (e.g. end
+    // before start) should re-prompt in this same sheet, not swallow the
+    // error and close it like the generic action wrapper would.
+    const save = async () => {
+      try {
+        data = await api.patch(`/api/workouts/${id}`, {
+          started_at: fromLocalInput(startInput.value),
+          ended_at: fromLocalInput(endInput.value),
+        });
+        sheet.close();
+        render();
+      } catch (err) {
+        toast(err.message || 'Could not save those times', { error: true });
+      }
+    };
+    const sheet = openSheet({
+      title: 'Edit workout times',
+      body: h(
+        'div',
+        { class: 'stack' },
+        h('label', { class: 'field-label' }, 'Started'),
+        startInput,
+        h('label', { class: 'field-label' }, 'Ended'),
+        endInput,
+        h('p', { class: 'muted small' }, 'Leave "Ended" empty if the workout is still in progress.'),
+        h('button', { class: 'btn primary block', onClick: save }, 'Save')
+      ),
+    });
+  }
+
   const archiveWorkout = safe(async () => {
     await api.patch(`/api/workouts/${id}`, { archived: true });
     location.hash = '#/history';
@@ -691,8 +756,57 @@ export async function workoutView(container, [idParam]) {
     menuSheet('Workout', [
       { label: 'Rename', icon: 'edit', onSelect: renameWorkout },
       { label: 'Add exercise', icon: 'plus', onSelect: () => openExercisePicker() },
+      { label: 'Edit times', hint: 'Fix a forgotten start or end', icon: 'timer', onSelect: editTimesSheet },
       { label: 'Archive workout', hint: 'Hidden from history, never deleted', danger: true, icon: 'x', onSelect: archiveWorkout },
     ]);
+  }
+
+  // ---------- Timer ----------
+
+  function timerBar() {
+    const { workout } = data;
+    clearTimer(); // this render pass decides fresh whether a live tick is needed
+    if (workout.archived) return null;
+
+    if (!workout.started_at) {
+      return h(
+        'div',
+        { class: 'card row timer-bar', style: { marginBottom: '12px' } },
+        icon('timer', 18),
+        h('span', { class: 'grow' }, 'No start time recorded for this workout.'),
+        h('button', { class: 'btn small', onClick: editTimesSheet }, 'Set times')
+      );
+    }
+
+    if (workout.ended_at) {
+      const minutes = (Date.parse(workout.ended_at) - Date.parse(workout.started_at)) / 60000;
+      return h(
+        'div',
+        { class: 'card row timer-bar', style: { marginBottom: '12px' } },
+        icon('timer', 18),
+        h('span', { class: 'grow' }, `Workout time: ${fmtDuration(minutes)}`),
+        h('button', { class: 'btn small ghost', onClick: editTimesSheet }, 'Edit times')
+      );
+    }
+
+    // Still in progress: a live ticking clock plus the button to stop it.
+    const elapsed = () => (Date.now() - Date.parse(workout.started_at)) / 1000;
+    const clockEl = h('span', { class: 'timer-clock' }, fmtClock(elapsed()));
+    timerInterval = setInterval(() => {
+      if (!document.body.contains(clockEl)) {
+        clearTimer();
+        return;
+      }
+      clockEl.textContent = fmtClock(elapsed());
+    }, 1000);
+
+    return h(
+      'div',
+      { class: 'card row timer-bar live', style: { marginBottom: '12px' } },
+      icon('timer', 18),
+      h('span', { class: 'grow' }, 'Workout in progress — ', clockEl),
+      h('button', { class: 'btn small primary', onClick: endWorkout }, icon('stop', 16), 'End workout')
+    );
   }
 
   // ---------- Removed items ----------
@@ -820,6 +934,7 @@ export async function workoutView(container, [idParam]) {
             )
           : null,
         offlineBanner(),
+        timerBar(),
         h('div', { class: 'workout-title' }, h('h1', {}, workoutTitle(workout))),
         h('div', { style: { margin: '10px 0 0' } }, summary),
         blockNodes,
@@ -849,5 +964,8 @@ export async function workoutView(container, [idParam]) {
   }
 
   render();
-  return unsubscribeQueue;
+  return () => {
+    clearTimer();
+    unsubscribeQueue();
+  };
 }

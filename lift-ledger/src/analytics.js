@@ -16,7 +16,7 @@ export function weekStart(dateStr) {
 const addWeeks = (s, n) => toStr(new Date(toDate(s).getTime() + n * WEEK));
 const weeksBetween = (a, b) => Math.round((toDate(b) - toDate(a)) / WEEK);
 
-function weekRange(from, to) {
+export function weekRange(from, to) {
   const out = [];
   for (let w = from; w <= to; w = addWeeks(w, 1)) out.push(w);
   return out;
@@ -363,6 +363,101 @@ export async function overview(today) {
     last_week: totalFor(lastIdx),
     total_workouts: new Set(rows.map((r) => r.workout_id)).size,
     lifts,
+  };
+}
+
+// ---------- Workout duration ----------
+
+// A duration longer than this is almost certainly a forgotten "End workout"
+// tap, not a real four-hour session — excluded from averages, but the raw
+// workout is still listed so it can be corrected via "Edit times".
+const MAX_PLAUSIBLE_MINUTES = 240;
+
+export async function durationOverview(today) {
+  const rows = await all(
+    `SELECT id, date, started_at, ended_at FROM workouts
+      WHERE archived = 0 AND started_at IS NOT NULL
+      ORDER BY date, id`
+  );
+  if (!rows.length) return { has_data: false };
+
+  const withDuration = rows.map((r) => {
+    const minutes = r.ended_at ? (Date.parse(r.ended_at) - Date.parse(r.started_at)) / 60000 : null;
+    return {
+      id: r.id,
+      date: r.date,
+      started_at: r.started_at,
+      ended_at: r.ended_at,
+      minutes: minutes != null ? round(minutes, 1) : null,
+      plausible: minutes != null && minutes > 0 && minutes <= MAX_PLAUSIBLE_MINUTES,
+    };
+  });
+
+  const valid = withDuration.filter((r) => r.plausible);
+  if (!valid.length) {
+    return {
+      has_data: true,
+      weeks: [],
+      series: [],
+      avg_minutes: null,
+      avg_last5: null,
+      avg_prev5: null,
+      trend_pct: null,
+      longest: null,
+      shortest: null,
+      sessions_with_duration: 0,
+      open_workouts: withDuration.filter((r) => !r.ended_at).length,
+      excluded_implausible: withDuration.filter((r) => r.ended_at && !r.plausible).length,
+      recent: withDuration.slice(-15).reverse(),
+    };
+  }
+
+  const currentWeek = weekStart(today);
+  const weeklyMap = new Map();
+  for (const r of valid) {
+    const wk = weekStart(r.date);
+    let a = weeklyMap.get(wk);
+    if (!a) {
+      a = { week: wk, total: 0, count: 0 };
+      weeklyMap.set(wk, a);
+    }
+    a.total += r.minutes;
+    a.count += 1;
+  }
+  const weeklyList = [...weeklyMap.values()]
+    .map((a) => ({ week: a.week, avg_minutes: round(a.total / a.count, 1), sessions: a.count }))
+    .sort((a, b) => (a.week < b.week ? -1 : 1));
+
+  const lastDataWeek = weeklyList[weeklyList.length - 1].week;
+  const weeks = weekRange(weeklyList[0].week, lastDataWeek > currentWeek ? lastDataWeek : currentWeek);
+  const byWeek = new Map(weeklyList.map((w) => [w.week, w]));
+  const series = weeks.map((w) => byWeek.get(w)?.avg_minutes ?? null);
+
+  const mean = (list) => list.reduce((a, r) => a + r.minutes, 0) / list.length;
+  const avgAll = round(mean(valid), 1);
+  const last5 = valid.slice(-5);
+  const prev5 = valid.slice(-10, -5);
+  const avgLast5 = last5.length ? round(mean(last5), 1) : null;
+  const avgPrev5 = prev5.length ? round(mean(prev5), 1) : null;
+  const trendPct = avgPrev5 && avgLast5 != null ? round(((avgLast5 - avgPrev5) / avgPrev5) * 100, 1) : null;
+
+  const longest = valid.reduce((best, r) => (!best || r.minutes > best.minutes ? r : best), null);
+  const shortest = valid.reduce((best, r) => (!best || r.minutes < best.minutes ? r : best), null);
+
+  return {
+    has_data: true,
+    weeks,
+    series,
+    avg_minutes: avgAll,
+    avg_last5: avgLast5,
+    avg_prev5: avgPrev5,
+    trend_pct: trendPct,
+    longest,
+    shortest,
+    sessions_with_duration: valid.length,
+    open_workouts: withDuration.filter((r) => !r.ended_at).length,
+    excluded_implausible: withDuration.filter((r) => r.ended_at && !r.plausible).length,
+    recent: withDuration.slice(-15).reverse(),
   };
 }
 

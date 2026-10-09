@@ -10,6 +10,7 @@ import {
   optInt,
   optNumber,
   optText,
+  optDateTime,
 } from '../validate.js';
 
 export const workoutsRouter = Router();
@@ -54,7 +55,8 @@ async function previousSession(exerciseId, workout) {
 
 async function loadWorkout(id) {
   const workout = await get(
-    `SELECT w.id, w.split_day_id, w.title, w.date, w.notes, w.archived, sd.name AS split_day_name
+    `SELECT w.id, w.split_day_id, w.title, w.date, w.notes, w.archived,
+            w.started_at, w.ended_at, sd.name AS split_day_name
        FROM workouts w LEFT JOIN split_days sd ON sd.id = w.split_day_id
       WHERE w.id = ?`,
     [id]
@@ -140,11 +142,15 @@ workoutsRouter.post('/workouts', async (req, res) => {
     if (!day) throw bad('That split day does not exist');
   }
 
-  const { id } = await run('INSERT INTO workouts (split_day_id, title, date) VALUES (?, ?, ?)', [
-    splitDayId,
-    title,
-    date,
-  ]);
+  // started_at is set the moment the workout is created — that's "the 2nd I
+  // press start workout" from the user's point of view, since creating a
+  // workout here is what the Start-workout buttons do. Set server-side so
+  // the clock isn't subject to the client's own clock skew. Stored as an
+  // ISO string (same format as ended_at) so the two are always comparable.
+  const { id } = await run(
+    'INSERT INTO workouts (split_day_id, title, date, started_at) VALUES (?, ?, ?, ?)',
+    [splitDayId, title, date, new Date().toISOString()]
+  );
 
   if (req.body?.copy_last && splitDayId !== null) {
     const last = await get(
@@ -170,14 +176,40 @@ workoutsRouter.post('/workouts', async (req, res) => {
 
 workoutsRouter.patch('/workouts/:id', async (req, res) => {
   const id = reqInt(req.params.id);
+  const existing = await get('SELECT started_at, ended_at FROM workouts WHERE id = ?', [id]);
+  if (!existing) throw notFound('Workout not found');
+
   const patch = {
     date: req.body?.date === undefined ? undefined : reqDate(req.body.date),
     title: optText(req.body?.title, 80),
     notes: optText(req.body?.notes, 4000),
     archived: optBool(req.body?.archived),
+    // Manual correction, e.g. the person forgot to tap "End workout".
+    started_at: optDateTime(req.body?.started_at, 'started_at'),
+    ended_at: optDateTime(req.body?.ended_at, 'ended_at'),
   };
+
+  const nextStarted = patch.started_at !== undefined ? patch.started_at : existing.started_at;
+  const nextEnded = patch.ended_at !== undefined ? patch.ended_at : existing.ended_at;
+  if (nextStarted && nextEnded && Date.parse(nextEnded) <= Date.parse(nextStarted)) {
+    throw bad('End time must be after the start time');
+  }
+
   const row = await updateRow('workouts', id, patch);
   if (!row) throw notFound('Workout not found');
+  res.json(await loadWorkout(id));
+});
+
+// Stops the clock. Set server-side, same reasoning as started_at above.
+// Idempotent: tapping it again (double-tap, a retried offline sync) just
+// returns the workout as it already stood rather than erroring.
+workoutsRouter.post('/workouts/:id/end', async (req, res) => {
+  const id = reqInt(req.params.id);
+  const workout = await get('SELECT id, ended_at FROM workouts WHERE id = ?', [id]);
+  if (!workout) throw notFound('Workout not found');
+  if (!workout.ended_at) {
+    await updateRow('workouts', id, { ended_at: new Date().toISOString() });
+  }
   res.json(await loadWorkout(id));
 });
 

@@ -101,6 +101,8 @@ const TABLES = [
     title TEXT,
     date TEXT NOT NULL,
     notes TEXT,
+    started_at TEXT,
+    ended_at TEXT,
     archived INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -171,6 +173,15 @@ const INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_bodyweight_date ON bodyweight_logs (date)',
 ];
 
+// Columns added after a table's initial release. ALTER TABLE ... ADD COLUMN
+// IF NOT EXISTS isn't supported here, so each addition is wrapped in a
+// try/catch that silently ignores "already exists" and warns on anything
+// else — safe to run against a brand-new database or an already-migrated one.
+const COLUMN_ADDITIONS = [
+  { table: 'workouts', column: 'started_at', ddl: 'TEXT' },
+  { table: 'workouts', column: 'ended_at', ddl: 'TEXT' },
+];
+
 const PROTECTED_TABLES = [
   'muscle_groups',
   'exercises',
@@ -186,6 +197,16 @@ const PROTECTED_TABLES = [
 export async function migrate() {
   await batch(TABLES);
   await batch(INDEXES);
+
+  for (const { table, column, ddl } of COLUMN_ADDITIONS) {
+    try {
+      await db.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    } catch (err) {
+      if (!String(err.message).includes('duplicate column')) {
+        console.warn(`Could not add column ${table}.${column}:`, err.message);
+      }
+    }
+  }
 
   // Belt and braces: the database itself refuses DELETE on every table.
   for (const table of PROTECTED_TABLES) {

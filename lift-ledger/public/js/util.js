@@ -59,6 +59,8 @@ const ICONS = {
   edit: '<path d="M4 20h4L19 9l-4-4L4 16v4z"/>',
   restore: '<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3.5 4v5h5"/>',
   up: '<path d="M12 19V6m0 0l-5 5m5-5l5 5"/>',
+  timer: '<circle cx="12" cy="13" r="8"/><path d="M12 13V9.5"/><path d="M9.5 2.5h5"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
 };
 
 export function icon(name, size = 20) {
@@ -119,6 +121,25 @@ export const pluralize = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export function fmtSet(s) {
   return `${fmtNum(s.weight ?? 0)}×${s.reps}`;
+}
+
+/** A live ticking clock, e.g. "4:05" or "1:04:05" once past an hour. */
+export function fmtClock(totalSeconds) {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const hrs = Math.floor(s / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const secs = s % 60;
+  return hrs > 0 ? `${hrs}:${pad(mins)}:${pad(secs)}` : `${mins}:${pad(secs)}`;
+}
+
+/** A finished duration for analytics/summaries, e.g. "1h 15m" or "42m". */
+export function fmtDuration(totalMinutes) {
+  if (totalMinutes === null || totalMinutes === undefined || Number.isNaN(totalMinutes)) return '–';
+  const mins = Math.round(totalMinutes);
+  const hrs = Math.floor(mins / 60);
+  const rem = mins % 60;
+  if (hrs <= 0) return `${rem}m`;
+  return rem ? `${hrs}h ${rem}m` : `${hrs}h`;
 }
 
 // ---------- Toasts ----------

@@ -62,3 +62,14 @@ export function reqDate(value) {
 export function optBool(value) {
   return value === undefined ? undefined : value ? 1 : 0;
 }
+
+// An ISO-8601 timestamp (as produced by `datetime('now')` or `Date.toISOString()`),
+// for manually correcting a workout's start/end time. null clears it.
+export function optDateTime(value, name = 'time') {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) {
+    throw bad(`${name} must be a valid date/time`);
+  }
+  return value;
+}

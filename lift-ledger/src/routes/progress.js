@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { all } from '../db.js';
-import { exerciseDetail, overview, bodyweightOverview, allRecords } from '../analytics.js';
+import { exerciseDetail, overview, bodyweightOverview, allRecords, durationOverview } from '../analytics.js';
 import { reqInt, reqDate } from '../validate.js';
 
 export const progressRouter = Router();
@@ -17,6 +17,10 @@ progressRouter.get('/progress/records', async (req, res) => {
 
 progressRouter.get('/progress/bodyweight', async (req, res) => {
   res.json(await bodyweightOverview());
+});
+
+progressRouter.get('/progress/duration', async (req, res) => {
+  res.json(await durationOverview(todayFrom(req)));
 });
 
 progressRouter.get('/progress/exercises/:id', async (req, res) => {
