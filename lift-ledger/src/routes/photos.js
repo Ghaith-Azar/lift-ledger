@@ -85,7 +85,7 @@ photosRouter.patch('/photos/:id', async (req, res) => {
   });
 });
 
-// ---------- AI comparison (optional, needs ANTHROPIC_API_KEY) ----------
+// ---------- AI comparison (optional, needs GEMINI_API_KEY) ----------
 
 photosRouter.get('/photos/ai-status', (req, res) => {
   res.json({ configured: aiConfigured });
@@ -102,7 +102,7 @@ async function loadPhotoForAI(id) {
 
 photosRouter.post('/photos/analyze', async (req, res) => {
   if (!aiConfigured) {
-    throw bad("AI analysis isn't set up on this server yet (needs an ANTHROPIC_API_KEY) — see the README.");
+    throw bad("AI analysis isn't set up on this server yet (needs a GEMINI_API_KEY) — see the README.");
   }
   const category = reqCategory(req.body?.category);
   const fromId = req.body?.from_id != null ? reqInt(req.body.from_id, 'from_id') : null;

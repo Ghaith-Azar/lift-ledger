@@ -270,7 +270,7 @@ export async function photosView(container) {
         h(
           'p',
           { class: 'muted small', style: { marginTop: '6px' } },
-          'A rough visual read, not a measurement — sends these two photos to the Anthropic API.'
+          'A rough visual read, not a measurement — sends these two photos to the Gemini API.'
         )
       );
     }

@@ -1,14 +1,19 @@
-// Optional: compares two progress photos with Claude's vision and returns a
+// Optional: compares two progress photos with Gemini's vision and returns a
 // short, cautious read on visible training progress. Entirely optional —
-// gated on ANTHROPIC_API_KEY being set, same pattern as push notifications
-// being gated on the VAPID keys (see push.js). Nothing here runs, and no
-// photo ever leaves this server, unless that key is configured.
+// gated on GEMINI_API_KEY being set, same pattern as push notifications being
+// gated on the VAPID keys (see push.js). Nothing here runs, and no photo ever
+// leaves this server, unless that key is configured.
+//
+// Uses the Gemini API's free tier (get a key at https://aistudio.google.com/apikey
+// — no credit card needed). See the README's "Progress photos" section.
 
-const API_KEY = process.env.ANTHROPIC_API_KEY || '';
-// Pass a different model via ANTHROPIC_MODEL if you'd rather trade some
-// quality for a cheaper/faster comparison (e.g. a Haiku-class model).
-const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5';
-const API_URL = 'https://api.anthropic.com/v1/messages';
+const API_KEY = process.env.GEMINI_API_KEY || '';
+// Pass a different model via GEMINI_MODEL if you'd rather trade some judgment
+// quality for speed, or a future model replaces this one. Check the current
+// list (and which models are still on the free tier) at
+// https://ai.google.dev/gemini-api/docs/models
+const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const apiUrl = (model) => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
 export const aiConfigured = Boolean(API_KEY);
 
@@ -49,48 +54,63 @@ Respond with ONLY a single JSON object, no other text, matching exactly:
  */
 export async function comparePhotos({ category, from, to }) {
   if (!aiConfigured) {
-    throw new Error('AI analysis is not configured on this server (ANTHROPIC_API_KEY is not set)');
+    throw new Error('AI analysis is not configured on this server (GEMINI_API_KEY is not set)');
   }
 
-  const res = await fetch(API_URL, {
+  const res = await fetch(apiUrl(MODEL), {
     method: 'POST',
     headers: {
-      'x-api-key': API_KEY,
-      'anthropic-version': '2023-06-01',
+      'x-goog-api-key': API_KEY,
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 400,
-      messages: [
+      systemInstruction: { parts: [{ text: buildPrompt(category, from.date, to.date) }] },
+      contents: [
         {
           role: 'user',
-          content: [
-            { type: 'text', text: buildPrompt(category, from.date, to.date) },
-            { type: 'text', text: `Photo 1 (${from.date}):` },
-            {
-              type: 'image',
-              source: { type: 'base64', media_type: from.content_type, data: from.data.toString('base64') },
-            },
-            { type: 'text', text: `Photo 2 (${to.date}):` },
-            {
-              type: 'image',
-              source: { type: 'base64', media_type: to.content_type, data: to.data.toString('base64') },
-            },
+          parts: [
+            { text: `Photo 1 (${from.date}):` },
+            { inline_data: { mime_type: from.content_type, data: from.data.toString('base64') } },
+            { text: `Photo 2 (${to.date}):` },
+            { inline_data: { mime_type: to.content_type, data: to.data.toString('base64') } },
           ],
         },
       ],
+      generationConfig: { temperature: 0.2, maxOutputTokens: 400 },
     }),
   });
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`AI analysis failed (${res.status}): ${body.slice(0, 300) || res.statusText}`);
+    const message = parseErrorMessage(body) || res.statusText;
+    throw new Error(`AI analysis failed (${res.status}): ${message.slice(0, 300)}`);
   }
 
   const payload = await res.json();
-  const text = payload?.content?.find((b) => b.type === 'text')?.text ?? '';
+  const candidate = payload?.candidates?.[0];
+
+  // Gemini's safety filters can block a response outright rather than
+  // returning text — most likely on an unusual photo, not a normal gym
+  // shot, but handle it as a soft "couldn't tell" rather than a crash.
+  const blockReason = payload?.promptFeedback?.blockReason;
+  if (blockReason || (candidate && ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST'].includes(candidate.finishReason))) {
+    return {
+      verdict: 'hard_to_tell',
+      summary: "The AI couldn't process these two photos (its safety filters flagged them). Try a different pair, or just compare them yourself above.",
+    };
+  }
+
+  const text = candidate?.content?.parts?.map((p) => p.text).filter(Boolean).join('\n') ?? '';
   return parseVerdict(text);
+}
+
+/** Gemini's error body is `{ error: { message, status, code } }`. */
+function parseErrorMessage(body) {
+  try {
+    return JSON.parse(body)?.error?.message || null;
+  } catch {
+    return body ? body.slice(0, 300) : null;
+  }
 }
 
 function parseVerdict(text) {

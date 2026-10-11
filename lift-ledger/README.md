@@ -84,9 +84,10 @@ JSON API. Charts are drawn with Chart.js.
   a timeline you can scroll, and a compare view to put any two side by side. Photos are
   resized in your browser before upload (so a 12MP camera shot becomes ~150KB) and stored
   in the database, not the server's disk, so they survive every redeploy. Optionally, **Ask
-  AI: am I improving?** sends two of your photos to the Anthropic API for a short, cautious
-  written read on visible training progress — off by default, needs a one-time setup (see
-  "Progress photos" below), and the gallery/compare view works fully without it.
+  AI: am I improving?** sends two of your photos to the Gemini API (a free key is enough)
+  for a short, cautious written read on visible training progress — off by default, needs
+  a one-time setup (see "Progress photos" below), and the gallery/compare view works fully
+  without it.
 
 ## Project layout
 
@@ -98,7 +99,7 @@ src/
   analytics.js    Weekly rollups, trend detection, estimated 1RM, workout duration,
                   PR counting, per-exercise consistency, per-muscle-group frequency
   progression.js  Progressive-overload suggestion engine + its settings
-  photoAI.js      Optional Anthropic-vision photo comparison (needs ANTHROPIC_API_KEY)
+  photoAI.js      Optional Gemini-vision photo comparison (needs GEMINI_API_KEY)
   validate.js     Input validation helpers
   routes/         catalog.js (split/exercises), workouts.js (logging), progress.js,
                   photos.js (progress-photo upload/gallery/AI compare),
@@ -226,23 +227,31 @@ The photo gallery, timeline and side-by-side compare all work with no setup at a
 live in your database (Turso), resized to ~150KB by your browser before upload, same
 "nothing is ever deleted" rule as the rest of your data (removing one archives it).
 
-The **Ask AI: am I improving?** button is optional and needs one environment variable:
+The **Ask AI: am I improving?** button is optional and runs on Gemini's free tier — a Google
+account is all you need, no billing setup and no credit card:
 
-1. Get an API key from [console.anthropic.com](https://console.anthropic.com). This is
-   billed per use on your Anthropic account — separate from, and unrelated to, any Claude
-   subscription you might already have.
-2. Add `ANTHROPIC_API_KEY` to Render's environment variables and redeploy. (Optionally set
-   `ANTHROPIC_MODEL` to a cheaper/faster Haiku-class model id if you'd rather trade off some
-   judgment quality for cost — it defaults to a Sonnet-class model.)
+1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey), sign in with any
+   Google account, and click **Create API key**. It's free — Google AI Studio's free tier
+   covers light, personal use like this with no cost and no card on file (Google may still
+   ask you to acknowledge their terms for free-tier usage, including that prompts/responses
+   on the free tier can be used to improve their models — see their terms if that matters
+   to you; a paid Google Cloud project removes that if you ever want it to).
+2. Add `GEMINI_API_KEY` to Render's environment variables and redeploy. (Optionally set
+   `GEMINI_MODEL` too — it defaults to `gemini-3.8-flash`; only needed if Google renames or
+   retires that model, check the current list at
+   [ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models).)
 3. Open **Progress → Progress photos → Compare**, pick two photos, and tap **Ask AI**.
 
 What it actually does: sends just the two photos you picked — nothing else from your data —
-to the Anthropic API, asking for a rough, cautious read on visible training progress in that
+to the Gemini API, asking for a rough, cautious read on visible training progress in that
 body region (never a weight, body-fat, or BMI guess, and it's told to say "hard to tell"
 rather than invent a confident answer when lighting/pose/angle make the comparison unclear).
 Results are cached per photo pair, so re-opening the same comparison doesn't trigger another
-paid call — only picking a pair you haven't compared before does. Without `ANTHROPIC_API_KEY`
-set, the button still shows but explains it isn't configured rather than erroring.
+call — only picking a pair you haven't compared before does. Without `GEMINI_API_KEY` set,
+the button still shows but explains it isn't configured rather than erroring. Free-tier
+requests are rate-limited by Google (generous, but not unlimited) — your current limits show
+in [AI Studio](https://aistudio.google.com/rate-limit); the result cache means you'll only
+hit them if you're comparing a lot of new photo pairs in a short time.
 
 ## Progressive overload assistant
 
