@@ -8,6 +8,8 @@ import { workoutsRouter } from './routes/workouts.js';
 import { progressRouter } from './routes/progress.js';
 import { adminRouter } from './routes/admin.js';
 import { bodyweightRouter } from './routes/bodyweight.js';
+import { photosRouter } from './routes/photos.js';
+import { progressionRouter } from './routes/progression.js';
 import { pushRouter } from './routes/push.js';
 import { pushConfigured, checkAndSendReminder, startScheduler } from './push.js';
 import { HttpError } from './validate.js';
@@ -33,7 +35,10 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   next();
 });
-app.use(express.json({ limit: '200kb' }));
+// Progress photos are uploaded as base64 JSON, so the body limit needs
+// headroom for a resized photo (client keeps these well under 1MB, but this
+// is generous against an unresized original) — everything else is tiny.
+app.use(express.json({ limit: '6mb' }));
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
@@ -54,7 +59,18 @@ app.post('/api/push/trigger', async (req, res) => {
 });
 
 app.use('/api/auth', authRouter);
-app.use('/api', requireAuth, catalogRouter, workoutsRouter, progressRouter, bodyweightRouter, pushRouter, adminRouter);
+app.use(
+  '/api',
+  requireAuth,
+  catalogRouter,
+  workoutsRouter,
+  progressRouter,
+  bodyweightRouter,
+  photosRouter,
+  progressionRouter,
+  pushRouter,
+  adminRouter
+);
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
 app.use('/vendor/chart.js', express.static(path.join(root, 'node_modules/chart.js/dist')));

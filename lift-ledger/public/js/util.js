@@ -61,6 +61,9 @@ const ICONS = {
   up: '<path d="M12 19V6m0 0l-5 5m5-5l5 5"/>',
   timer: '<circle cx="12" cy="13" r="8"/><path d="M12 13V9.5"/><path d="M9.5 2.5h5"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  camera: '<path d="M4 8h3l1.5-2.5h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/>',
+  sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/>',
+  sliders: '<path d="M4 6h7M15 6h5M4 12h11M19 12h1M4 18h3M11 18h9"/><circle cx="12.5" cy="6" r="2.2"/><circle cx="14.5" cy="12" r="2.2"/><circle cx="8.5" cy="18" r="2.2"/>',
 };
 
 export function icon(name, size = 20) {

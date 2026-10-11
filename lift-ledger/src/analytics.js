@@ -143,6 +143,32 @@ function analyseExercise(rows, currentWeek) {
   return { weeklyMap, weeklyList, first, latest, hasWeight, primary, trend: trend(weeklyList, primary, currentWeek) };
 }
 
+/**
+ * How steady recent sessions have been, rather than judging progress off a
+ * single best or worst workout. Coefficient of variation of the primary
+ * metric (volume for a weighted move, total reps for bodyweight) over the
+ * last up to 6 sessions, turned into a 0-100 score. Needs at least 3 recent
+ * sessions with a non-zero metric to say anything.
+ */
+function computeConsistency(sessionsNewestFirst, hasWeight) {
+  const recent = sessionsNewestFirst.slice(0, 6);
+  const metric = (s) => (hasWeight ? s.volume : s.sets.reduce((a, x) => a + (x.reps || 0), 0));
+  const vals = recent.map(metric).filter((v) => v > 0);
+  if (vals.length < 3) return null;
+
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+  if (!mean) return null;
+  const variance = vals.reduce((a, v) => a + (v - mean) ** 2, 0) / vals.length;
+  const cv = Math.sqrt(variance) / mean;
+  const score = Math.max(0, Math.min(100, Math.round((1 - cv) * 100)));
+
+  let label = 'Variable';
+  if (score >= 80) label = 'Very consistent';
+  else if (score >= 60) label = 'Fairly consistent';
+  else if (score < 40) label = 'Inconsistent';
+  return { score, label, sessions_used: vals.length };
+}
+
 function contiguousWeeks(weeklyList, currentWeek) {
   const firstWeek = weeklyList[0].week;
   const lastWeek = weeklyList[weeklyList.length - 1].week;
@@ -165,6 +191,7 @@ export async function exerciseDetail(exerciseId, today) {
   // Records
   let heaviest = null;
   let bestE1rm = null;
+  let bestSetVolume = null;
   for (const r of rows) {
     if (!heaviest || r.weight > heaviest.weight || (r.weight === heaviest.weight && r.reps > heaviest.reps)) {
       heaviest = { weight: r.weight, reps: r.reps, date: r.date };
@@ -172,6 +199,10 @@ export async function exerciseDetail(exerciseId, today) {
     const est = estimate1RM(r.weight, r.reps);
     if (est > 0 && (!bestE1rm || est > bestE1rm.value)) {
       bestE1rm = { value: round(est), weight: r.weight, reps: r.reps, date: r.date };
+    }
+    const vol = r.weight * r.reps;
+    if (vol > 0 && (!bestSetVolume || vol > bestSetVolume.value)) {
+      bestSetVolume = { value: round(vol, 0), weight: r.weight, reps: r.reps, date: r.date };
     }
   }
 
@@ -194,6 +225,8 @@ export async function exerciseDetail(exerciseId, today) {
     })
     .sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : y.workout_id - x.workout_id))
     .slice(0, 20);
+
+  const consistency = computeConsistency(sessions, a.hasWeight);
 
   return {
     has_data: true,
@@ -219,6 +252,7 @@ export async function exerciseDetail(exerciseId, today) {
       first_week: a.first.week,
       latest_week: a.latest.week,
       trend: a.trend,
+      consistency,
       change: {
         top_weight: pctChange(a.first.top_weight, a.latest.top_weight),
         avg_reps: pctChange(a.first.avg_reps, a.latest.avg_reps),
@@ -237,24 +271,60 @@ export async function exerciseDetail(exerciseId, today) {
         best_e1rm: round(a.latest.best_e1rm),
       },
     },
-    records: { heaviest, best_e1rm: bestE1rm },
+    records: { heaviest, best_e1rm: bestE1rm, best_set_volume: bestSetVolume },
     sessions,
   };
 }
 
 // ---------- Personal records ----------
 
+/**
+ * Counts how many sets in this exercise's chronological history beat
+ * everything logged before them — weight or estimated strength for a
+ * weighted movement, reps for a bodyweight one. Same "what counts as a PR"
+ * rule as detectPR() in workouts.js, just replayed over the full history
+ * instead of checked against one new set.
+ */
+function countPRs(list) {
+  const hasWeight = list.some((r) => r.weight > 0);
+  let maxWeight = 0;
+  let maxE1rm = 0;
+  let maxReps = 0;
+  let n = 0;
+  for (const r of list) {
+    let isPR = false;
+    if (hasWeight) {
+      if (r.weight > maxWeight) isPR = true;
+      else if (r.weight > 0) {
+        const est = estimate1RM(r.weight, r.reps);
+        if (est > maxE1rm + 0.05) isPR = true;
+      }
+    } else if (r.reps > maxReps) {
+      isPR = true;
+    }
+    if (isPR) n += 1;
+    maxWeight = Math.max(maxWeight, r.weight);
+    maxE1rm = Math.max(maxE1rm, estimate1RM(r.weight, r.reps));
+    maxReps = Math.max(maxReps, r.reps);
+  }
+  return n;
+}
+
 export async function allRecords() {
   const rows = await loadRows();
   if (!rows.length) return { has_data: false };
 
   const records = [];
+  let totalPRs = 0;
   for (const list of groupBy(rows, (r) => r.exercise_id).values()) {
     const hasWeight = list.some((r) => r.weight > 0);
     let heaviest = null;
     let bestE1rm = null;
     let bestReps = null;
+    let bestSetVolume = null;
     for (const r of list) {
+      // Ties on weight go to the higher rep count, so this doubles as "most
+      // reps you've done at your heaviest weight."
       if (!heaviest || r.weight > heaviest.weight || (r.weight === heaviest.weight && r.reps > heaviest.reps)) {
         heaviest = { weight: r.weight, reps: r.reps, date: r.date, workout_id: r.workout_id };
       }
@@ -265,7 +335,13 @@ export async function allRecords() {
       if (!bestReps || r.reps > bestReps.reps) {
         bestReps = { reps: r.reps, weight: r.weight, date: r.date, workout_id: r.workout_id };
       }
+      const vol = r.weight * r.reps;
+      if (vol > 0 && (!bestSetVolume || vol > bestSetVolume.value)) {
+        bestSetVolume = { value: round(vol, 0), weight: r.weight, reps: r.reps, date: r.date, workout_id: r.workout_id };
+      }
     }
+    const prCount = countPRs(list);
+    totalPRs += prCount;
     records.push({
       exercise_id: list[0].exercise_id,
       name: list[0].exercise_name,
@@ -275,11 +351,13 @@ export async function allRecords() {
       heaviest: hasWeight ? heaviest : null,
       best_e1rm: hasWeight ? bestE1rm : null,
       best_reps: bestReps,
+      best_set_volume: hasWeight ? bestSetVolume : null,
+      pr_count: prCount,
       last_date: list[list.length - 1].date,
     });
   }
   records.sort((a, b) => a.name.localeCompare(b.name));
-  return { has_data: true, records };
+  return { has_data: true, records, total_prs: totalPRs };
 }
 
 // ---------- Overview ----------
@@ -332,14 +410,35 @@ export async function overview(today) {
         name: r.muscle_group_name,
         sets: weeks.map(() => 0),
         volume: weeks.map(() => 0),
+        sessionDates: new Map(), // workout_id -> date, for training-frequency below
       };
       groups.set(r.muscle_group_id, g);
     }
     if (r.drop_index === 0) g.sets[i] += 1;
     g.volume[i] += r.weight * r.reps;
+    g.sessionDates.set(r.workout_id, r.date);
   }
+  // Training frequency per muscle group: sessions in the last 4 weeks, and
+  // the average gap between sessions — not just "sets per week", but how
+  // often you actually show up for that muscle group.
+  const freqCutoff = addWeeks(currentWeek, -4);
   const groupList = [...groups.values()]
-    .map((g) => ({ ...g, volume: g.volume.map((v) => Math.round(v)) }))
+    .map((g) => {
+      const dates = [...g.sessionDates.values()].sort();
+      const gaps = [];
+      for (let i = 1; i < dates.length; i++) gaps.push((toDate(dates[i]) - toDate(dates[i - 1])) / DAY);
+      return {
+        id: g.id,
+        name: g.name,
+        sets: g.sets,
+        volume: g.volume.map((v) => Math.round(v)),
+        frequency: {
+          sessions_last_4wk: dates.filter((d) => d >= freqCutoff).length,
+          avg_gap_days: gaps.length ? round(gaps.reduce((a, b) => a + b, 0) / gaps.length, 1) : null,
+          last_trained: dates[dates.length - 1] || null,
+        },
+      };
+    })
     .sort((x, y) => y.sets.reduce((a, b) => a + b, 0) - x.sets.reduce((a, b) => a + b, 0));
 
   const thisIdx = index.get(currentWeek);

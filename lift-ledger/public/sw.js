@@ -5,7 +5,7 @@
 //
 // Bump CACHE below whenever the shell file list changes, so old clients
 // pick up the new list instead of serving a stale cache forever.
-const CACHE = 'lift-ledger-shell-v2';
+const CACHE = 'lift-ledger-shell-v3';
 
 const SHELL = [
   '/',
@@ -20,6 +20,7 @@ const SHELL = [
   '/js/charts.js',
   '/js/offlineSets.js',
   '/js/push.js',
+  '/js/photoUtil.js',
   '/js/exerciseLibrary.js',
   '/js/views/shared.js',
   '/js/views/home.js',
@@ -27,6 +28,7 @@ const SHELL = [
   '/js/views/progress.js',
   '/js/views/split.js',
   '/js/views/workout.js',
+  '/js/views/photos.js',
 ];
 
 self.addEventListener('install', (event) => {

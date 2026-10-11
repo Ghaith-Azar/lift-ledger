@@ -140,6 +140,37 @@ const TABLES = [
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  // Progress photos: the image itself lives in the database as a BLOB
+  // (Turso/libSQL, not the app server's disk — Render's free tier wipes
+  // local disk on every deploy, same reason the DB lives on Turso at all).
+  // A resized JPEG from the client is typically 100-300KB, so years of
+  // weekly photos stay a small fraction of Turso's free-tier storage.
+  `CREATE TABLE IF NOT EXISTS progress_photos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    category TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    data BLOB NOT NULL,
+    byte_size INTEGER NOT NULL,
+    notes TEXT,
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  // A cached result of comparing two photos with the AI (see photoAI.js).
+  // Not in PROTECTED_TABLES: it's a regenerable cache, not workout history —
+  // re-running the comparison recreates it, and a stale row (pointing at a
+  // since-archived photo) is fine to clean up outright.
+  `CREATE TABLE IF NOT EXISTS photo_analyses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL,
+    from_photo_id INTEGER NOT NULL REFERENCES progress_photos(id),
+    to_photo_id INTEGER NOT NULL REFERENCES progress_photos(id),
+    verdict TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (from_photo_id, to_photo_id)
+  )`,
   // Not in PROTECTED_TABLES on purpose: these are device/app bookkeeping,
   // not workout history, so they can be cleaned up freely (a dead push
   // subscription gets deleted outright rather than archived).
@@ -171,6 +202,7 @@ const INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_sets_we ON sets (workout_exercise_id)',
   'CREATE INDEX IF NOT EXISTS idx_exercises_group ON exercises (muscle_group_id)',
   'CREATE INDEX IF NOT EXISTS idx_bodyweight_date ON bodyweight_logs (date)',
+  'CREATE INDEX IF NOT EXISTS idx_photos_category_date ON progress_photos (category, date)',
 ];
 
 // Columns added after a table's initial release. ALTER TABLE ... ADD COLUMN
@@ -191,6 +223,7 @@ const PROTECTED_TABLES = [
   'workout_exercises',
   'sets',
   'bodyweight_logs',
+  'progress_photos',
   'edit_log',
 ];
 
@@ -245,5 +278,6 @@ export async function resetAll() {
   await batch([
     { sql: 'DELETE FROM push_subscriptions' },
     { sql: 'DELETE FROM app_settings' },
+    { sql: 'DELETE FROM photo_analyses' },
   ]);
 }

@@ -73,3 +73,37 @@ export function optDateTime(value, name = 'time') {
   }
   return value;
 }
+
+// ---------- Progress photos ----------
+
+export const PHOTO_CATEGORIES = ['upper', 'lower'];
+
+export function reqCategory(value) {
+  if (!PHOTO_CATEGORIES.includes(value)) throw bad('category must be "upper" or "lower"');
+  return value;
+}
+
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+// The client resizes photos well under this before upload — this is just
+// generous headroom against an unresized original or a slow resize.
+const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+
+/** Decodes { content_type, data } (base64, optionally a data: URL) into a Buffer. */
+export function reqImageData(body) {
+  const contentType = body?.content_type;
+  if (!ALLOWED_IMAGE_TYPES.includes(contentType)) {
+    throw bad('content_type must be image/jpeg, image/png or image/webp');
+  }
+  const raw = body?.data;
+  if (typeof raw !== 'string' || !raw.length) throw bad('data (base64-encoded image) is required');
+  const base64 = raw.startsWith('data:') && raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw;
+  let buffer;
+  try {
+    buffer = Buffer.from(base64, 'base64');
+  } catch {
+    throw bad('data is not valid base64');
+  }
+  if (!buffer.length) throw bad('data is empty');
+  if (buffer.length > MAX_IMAGE_BYTES) throw bad('Image is too large (6MB max)');
+  return { contentType, buffer };
+}

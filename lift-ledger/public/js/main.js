@@ -7,6 +7,7 @@ import { workoutView } from './views/workout.js';
 import { historyView } from './views/history.js';
 import { progressView, exerciseProgressView, recordsView } from './views/progress.js';
 import { splitView } from './views/split.js';
+import { photosView } from './views/photos.js';
 // Imported for its side effects: registers the 'online' listener and
 // periodic retry that keep the offline set-logging queue draining no
 // matter which page is open.
@@ -25,6 +26,7 @@ const routes = [
   [/^#\/history$/, historyView, 'history'],
   [/^#\/progress\/exercise\/(\d+)$/, exerciseProgressView, 'progress'],
   [/^#\/progress\/records$/, recordsView, 'progress'],
+  [/^#\/photos$/, photosView, 'progress'],
   [/^#\/progress$/, progressView, 'progress'],
   [/^#\/split$/, splitView, 'split'],
   [/^#?\/?$/, homeView, 'train'],

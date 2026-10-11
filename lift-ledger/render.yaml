@@ -25,3 +25,7 @@ services:
         sync: false
       - key: CRON_SECRET
         sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        sync: false

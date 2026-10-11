@@ -1,6 +1,7 @@
-import { h, icon, openSheet, toast, fmtDate, fmtNum, relDay, fmtVolume, pluralize, todayStr } from '../util.js';
+import { h, icon, openSheet, toast, safe, fmtDate, fmtNum, relDay, fmtVolume, pluralize, todayStr } from '../util.js';
 import { state, groupById, plateColor } from '../state.js';
 import { suggestionsFor } from '../exerciseLibrary.js';
+import { api } from '../api.js';
 
 export function groupChip(groupId) {
   const g = groupById(groupId);
@@ -174,6 +175,114 @@ export function daysSinceWeighIn(bw) {
   const today = new Date(`${todayStr()}T00:00:00`);
   const last = new Date(`${bw.latest.date}T00:00:00`);
   return Math.round((today - last) / 86400000);
+}
+
+// ---------- Progressive overload settings ----------
+
+const STRATEGY_LABEL = { double: 'Double progression', linear: 'Linear' };
+
+/**
+ * Opens a sheet to configure the progressive-overload assistant. Shared by
+ * the Progress page (gear icon) and the in-workout menu, so it's reachable
+ * from wherever someone notices a suggestion. Every change here is the
+ * person explicitly choosing how the assistant should behave — nothing
+ * about weight or reps is ever changed on its own.
+ */
+export function progressionSettingsSheet() {
+  const body = h('div');
+
+  async function paint() {
+    body.replaceChildren(h('p', { class: 'muted' }, 'Loading…'));
+    const s = await api.get('/api/progression/settings');
+
+    const enabledToggle = h(
+      'div',
+      { class: 'segmented' },
+      [
+        { v: true, label: 'On' },
+        { v: false, label: 'Off' },
+      ].map((opt) =>
+        h(
+          'button',
+          {
+            'aria-pressed': String(s.enabled === opt.v),
+            onClick: safe(async () => {
+              await api.patch('/api/progression/settings', { enabled: opt.v });
+              await paint();
+            }),
+          },
+          opt.label
+        )
+      )
+    );
+
+    if (!s.enabled) {
+      body.replaceChildren(
+        h('label', { class: 'field-label' }, 'Suggestions'),
+        enabledToggle,
+        h('p', { class: 'muted small', style: { marginTop: '8px' } }, "Turned off — your workouts won't show a suggested next target.")
+      );
+      return;
+    }
+
+    const strategyToggle = h(
+      'div',
+      { class: 'segmented' },
+      ['double', 'linear'].map((v) =>
+        h(
+          'button',
+          {
+            'aria-pressed': String(s.strategy === v),
+            onClick: safe(async () => {
+              await api.patch('/api/progression/settings', { strategy: v });
+              await paint();
+            }),
+          },
+          STRATEGY_LABEL[v]
+        )
+      )
+    );
+
+    const numField = (label, key, value, { min = 0, max = 100, step = 1 } = {}) => {
+      const input = h('input', { type: 'number', min, max, step, value, style: { maxWidth: '110px' } });
+      input.addEventListener(
+        'change',
+        safe(async () => {
+          const n = Number(input.value);
+          if (!Number.isFinite(n)) return toast('Enter a number', { error: true });
+          await api.patch('/api/progression/settings', { [key]: n });
+          await paint();
+        })
+      );
+      return h('div', { class: 'row between', style: { marginTop: '10px', gap: '10px' } }, h('label', { class: 'field-label' }, label), input);
+    };
+
+    body.replaceChildren(
+      h('label', { class: 'field-label' }, 'Suggestions'),
+      enabledToggle,
+      h('label', { class: 'field-label', style: { marginTop: '14px' } }, 'Strategy'),
+      strategyToggle,
+      h(
+        'p',
+        { class: 'muted small', style: { margin: '6px 0 0' } },
+        s.strategy === 'double'
+          ? 'Climb reps to the top of your range first, then add weight and reset reps.'
+          : 'Add weight as soon as every set reaches the top of your rep range.'
+      ),
+      numField('Rep range — low', 'rep_low', s.rep_low, { min: 1, max: 50 }),
+      numField('Rep range — high', 'rep_high', s.rep_high, { min: 1, max: 50 }),
+      numField('Weight increment', 'weight_increment', s.weight_increment, { min: 0.5, max: 50, step: 0.5 }),
+      numField('Flag a decline after (sessions)', 'plateau_sessions', s.plateau_sessions, { min: 2, max: 10 }),
+      h(
+        'p',
+        { class: 'muted small', style: { margin: '14px 0 0' } },
+        'A suggestion is only ever an offer — use it, edit the numbers, or ignore it. Nothing is changed automatically.'
+      )
+    );
+  }
+
+  openSheet({ title: 'Progression settings', body: () => body });
+  paint();
 }
 
 /** progressing / regressing / plateau / building / inactive → a small coloured badge. */

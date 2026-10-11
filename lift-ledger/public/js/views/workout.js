@@ -18,7 +18,7 @@ import {
   pluralize,
 } from '../util.js';
 import { state, loadCatalog, activeGroups, exercisesOfGroup, plateColor, groupById } from '../state.js';
-import { groupChip, workoutTitle, suggestionChips } from './shared.js';
+import { groupChip, workoutTitle, suggestionChips, progressionSettingsSheet } from './shared.js';
 import {
   newTempId,
   isTempId,
@@ -39,6 +39,9 @@ export async function workoutView(container, [idParam]) {
   let showRemoved = false;
   let focus = null; // { exId, field }
   let timerInterval = null;
+  // Dismissing a suggestion just hides it for the rest of this screen — it's
+  // not persisted, so it's never a nag you have to permanently silence.
+  const dismissedSuggestions = new Set();
 
   const clearTimer = () => {
     if (timerInterval) {
@@ -238,11 +241,11 @@ export async function workoutView(container, [idParam]) {
   const nextDropIndex = (e, setNumber) =>
     e.sets.filter((s) => s.set_number === setNumber).reduce((max, s) => Math.max(max, s.drop_index), 0) + 1;
 
-  const addSet = act(async (e) => {
-    const mains = e.sets.filter((s) => !s.archived && s.drop_index === 0);
-    const last = mains[mains.length - 1];
-    const body = last ? { weight: last.weight, reps: last.reps } : {};
-    focus = { exId: e.id, field: last ? 'reps' : 'weight' };
+  // Shared by "Add set" (copies the last set logged this session) and "Use
+  // suggestion" (prefills from the progressive-overload assistant) — same
+  // create-with-offline-fallback logic either way.
+  const createMainSet = act(async (e, body, focusField) => {
+    focus = { exId: e.id, field: focusField };
     try {
       return await api.post(`/api/workout-exercises/${e.id}/sets`, body);
     } catch (err) {
@@ -263,6 +266,23 @@ export async function workoutView(container, [idParam]) {
       return data;
     }
   });
+
+  const addSet = (e) => {
+    const mains = e.sets.filter((s) => !s.archived && s.drop_index === 0);
+    const last = mains[mains.length - 1];
+    const body = last ? { weight: last.weight, reps: last.reps } : {};
+    return createMainSet(e, body, last ? 'reps' : 'weight');
+  };
+
+  // Pre-fills a new set from the progression assistant's suggestion. Still
+  // just a normal, editable set once created — accepting a suggestion is
+  // never more binding than typing the numbers in by hand.
+  const useSuggestion = (e) => {
+    const s = e.suggestion;
+    if (!s) return;
+    const body = s.weight != null ? { weight: s.weight, reps: s.reps } : { reps: s.reps };
+    return createMainSet(e, body, 'reps');
+  };
 
   const addDrop = act(async (e, s) => {
     focus = { exId: e.id, field: 'weight' };
@@ -431,6 +451,71 @@ export async function workoutView(container, [idParam]) {
     ]);
   }
 
+  // ---------- Progressive overload suggestion ----------
+
+  function suggestionTarget(s) {
+    return `${s.sets}×${s.reps}${s.weight != null ? ` @ ${fmtNum(s.weight)} ${state.unit}` : ''}`;
+  }
+
+  /**
+   * A suggested next target (weight/reps/sets) computed server-side from
+   * recent sessions, or a "target hit" confirmation once this session's
+   * logged sets meet or beat it. Never applied on its own — Use prefills an
+   * editable set, Dismiss just hides the banner for this screen, and doing
+   * neither (logging your own numbers) is the "ignore" option.
+   */
+  function suggestionBanner(e) {
+    const s = e.suggestion;
+    if (!s) return null;
+
+    const mains = e.sets.filter((x) => !x.archived && x.drop_index === 0);
+    const hit =
+      mains.length >= s.sets &&
+      mains.slice(0, s.sets).every((x) => (x.reps || 0) >= s.reps && (x.weight || 0) >= (s.weight || 0));
+
+    if (hit) {
+      return h(
+        'div',
+        { class: 'suggestion-row hit' },
+        icon('check', 18),
+        h('span', {}, `Target hit — ${suggestionTarget(s)} done.`)
+      );
+    }
+    if (dismissedSuggestions.has(e.id)) return null;
+
+    return h(
+      'div',
+      { class: `suggestion-row${s.declining ? ' caution' : ''}` },
+      h(
+        'div',
+        { class: 'row', style: { alignItems: 'flex-start', gap: '8px' } },
+        icon('sparkle', 18),
+        h(
+          'div',
+          { class: 'grow' },
+          h('div', {}, h('strong', {}, 'Suggested: '), suggestionTarget(s)),
+          h('p', { class: 'muted small', style: { margin: '2px 0 0' } }, s.reason)
+        )
+      ),
+      h(
+        'div',
+        { class: 'row', style: { gap: '8px', marginTop: '8px' } },
+        h('button', { class: 'btn small grow', onClick: () => useSuggestion(e) }, 'Use'),
+        h(
+          'button',
+          {
+            class: 'btn small ghost grow',
+            onClick: () => {
+              dismissedSuggestions.add(e.id);
+              render();
+            },
+          },
+          'Dismiss'
+        )
+      )
+    );
+  }
+
   function exerciseCard(e, { letter, showGroup } = {}) {
     const activeSets = e.sets.filter((s) => !s.archived);
     const prevByKey = new Map((e.previous?.sets || []).map((s) => [`${s.n}.${s.drop_index}`, s]));
@@ -475,6 +560,7 @@ export async function workoutView(container, [idParam]) {
         )
       ),
       lastTime,
+      suggestionBanner(e),
       rows.length
         ? h(
             'div',
@@ -757,6 +843,7 @@ export async function workoutView(container, [idParam]) {
       { label: 'Rename', icon: 'edit', onSelect: renameWorkout },
       { label: 'Add exercise', icon: 'plus', onSelect: () => openExercisePicker() },
       { label: 'Edit times', hint: 'Fix a forgotten start or end', icon: 'timer', onSelect: editTimesSheet },
+      { label: 'Progression settings', hint: 'How suggested targets are worked out', icon: 'sliders', onSelect: progressionSettingsSheet },
       { label: 'Archive workout', hint: 'Hidden from history, never deleted', danger: true, icon: 'x', onSelect: archiveWorkout },
     ]);
   }

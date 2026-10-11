@@ -63,6 +63,30 @@ JSON API. Charts are drawn with Chart.js.
   statements outright. Every edit is written to an `edit_log` table with the
   before/after values. `GET /api/export` downloads a full JSON backup,
   including that edit history, any time you want one.
+- **Previous session, right next to today's.** Every exercise card shows a "Last time"
+  line and, in the set grid itself, a "Last" column beside each weight/reps box — what
+  you did is always visible while you're deciding what to do now, no tab-switching.
+- **Progressive overload assistant.** Each exercise can show a suggested next target
+  (weight × reps × sets) worked out from your last session — climb reps to the top of
+  your range, then add weight and reset (or a straight linear add, your choice). It
+  flags a personal record, confirms once you've matched or beaten the suggested target,
+  and if the last few sessions trended down it suggests holding steady instead of pushing
+  further. Every suggestion is just that — **Use** it, edit the numbers after, or ignore it
+  and log whatever you actually did; nothing is ever applied on its own. Tune the rules
+  (strategy, rep range, weight increment, how many declining sessions count as a trend, or
+  turn it off entirely) from the sliders icon on Progress or the workout's ⋯ menu.
+- **Deeper insights on Progress** — total personal records at a glance, volume lifted per
+  muscle group per week (not just set count), training frequency per muscle group (sessions
+  in the last 4 weeks, average days between sessions), and on each exercise's own page: a
+  "reps at your top weight" trend line, a best-single-set-volume record, and a consistency
+  score comparing your last several sessions rather than judging off one best or worst day.
+- **Progress photos.** Log upper- and lower-body photos over time from the Progress tab —
+  a timeline you can scroll, and a compare view to put any two side by side. Photos are
+  resized in your browser before upload (so a 12MP camera shot becomes ~150KB) and stored
+  in the database, not the server's disk, so they survive every redeploy. Optionally, **Ask
+  AI: am I improving?** sends two of your photos to the Anthropic API for a short, cautious
+  written read on visible training progress — off by default, needs a one-time setup (see
+  "Progress photos" below), and the gallery/compare view works fully without it.
 
 ## Project layout
 
@@ -71,16 +95,21 @@ src/
   server.js       Express app, static file serving, error handling
   db.js           Schema, migrations, the no-delete triggers, edit_log helper
   auth.js         Single-password auth (signed cookie)
-  analytics.js    Weekly rollups, trend detection, estimated 1RM
+  analytics.js    Weekly rollups, trend detection, estimated 1RM, workout duration,
+                  PR counting, per-exercise consistency, per-muscle-group frequency
+  progression.js  Progressive-overload suggestion engine + its settings
+  photoAI.js      Optional Anthropic-vision photo comparison (needs ANTHROPIC_API_KEY)
   validate.js     Input validation helpers
-  routes/         catalog.js (split/exercises), workouts.js (logging), progress.js
+  routes/         catalog.js (split/exercises), workouts.js (logging), progress.js,
+                  photos.js (progress-photo upload/gallery/AI compare),
+                  progression.js (suggestion settings)
 public/
   index.html
   sw.js           Service worker: app-shell caching + push notification handling
   css/styles.css
   js/             main.js (router), views/, api.js, state.js, charts.js, util.js,
                   offlineSets.js (offline set-logging queue), push.js (subscribe/
-                  unsubscribe), exerciseLibrary.js
+                  unsubscribe), photoUtil.js (client-side photo resize), exerciseLibrary.js
 scripts/
   generate-vapid-keys.js   One-time key pair for push notifications
 ```
@@ -190,6 +219,54 @@ check anything. Two ways to handle this, from least to most effort:
 
 Notification timing is in UTC (there's no per-device timezone to go by on the server side)
 — pick the day and hour from the sheet with that in mind.
+
+## Progress photos
+
+The photo gallery, timeline and side-by-side compare all work with no setup at all — photos
+live in your database (Turso), resized to ~150KB by your browser before upload, same
+"nothing is ever deleted" rule as the rest of your data (removing one archives it).
+
+The **Ask AI: am I improving?** button is optional and needs one environment variable:
+
+1. Get an API key from [console.anthropic.com](https://console.anthropic.com). This is
+   billed per use on your Anthropic account — separate from, and unrelated to, any Claude
+   subscription you might already have.
+2. Add `ANTHROPIC_API_KEY` to Render's environment variables and redeploy. (Optionally set
+   `ANTHROPIC_MODEL` to a cheaper/faster Haiku-class model id if you'd rather trade off some
+   judgment quality for cost — it defaults to a Sonnet-class model.)
+3. Open **Progress → Progress photos → Compare**, pick two photos, and tap **Ask AI**.
+
+What it actually does: sends just the two photos you picked — nothing else from your data —
+to the Anthropic API, asking for a rough, cautious read on visible training progress in that
+body region (never a weight, body-fat, or BMI guess, and it's told to say "hard to tell"
+rather than invent a confident answer when lighting/pose/angle make the comparison unclear).
+Results are cached per photo pair, so re-opening the same comparison doesn't trigger another
+paid call — only picking a pair you haven't compared before does. Without `ANTHROPIC_API_KEY`
+set, the button still shows but explains it isn't configured rather than erroring.
+
+## Progressive overload assistant
+
+No setup needed — it's on by default with sensible rules, and every suggestion is purely
+an offer (see "How it works" above).
+
+**How a target is worked out**, from your most recent session of that exercise:
+
+- **Double progression** (the default): if every set reached the top of your rep range
+  (12 reps by default), it suggests adding weight (2.5 by default) and resetting reps to
+  the bottom of the range (8 by default). Otherwise, it suggests repeating the weight and
+  adding a rep to your hardest set.
+- **Linear**: adds weight as soon as every set reaches the top of the rep range; otherwise
+  repeats the weight and nudges reps up, same as double progression's "not there yet" case.
+- A **bodyweight-only** exercise (no weight ever logged) only ever suggests one more rep
+  than your toughest set last time.
+- If your last few sessions (3 by default) trended down without a single improvement, it
+  suggests holding at today's numbers rather than climbing further — technique, sleep and
+  stress are usually the cause, and the assistant isn't trying to talk you out of a rest.
+- The very first time you log an exercise, there's no suggestion yet — nothing to base one on.
+
+**Settings** (sliders icon on Progress, or a workout's ⋯ menu → Progression settings):
+turn suggestions on/off entirely, switch strategy, change the rep range, the weight
+increment, and how many declining sessions count as a trend worth flagging.
 
 ## Notes on a couple of design choices
 

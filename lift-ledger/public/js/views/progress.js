@@ -18,7 +18,7 @@ import {
 } from '../util.js';
 import { state, setUnit, plateColor } from '../state.js';
 import { drawChart, destroyCharts, colors } from '../charts.js';
-import { groupChip, sparkline, trendBadge, bodyweightForm, signedWeight } from './shared.js';
+import { groupChip, sparkline, trendBadge, bodyweightForm, signedWeight, progressionSettingsSheet } from './shared.js';
 import { pushSupported, currentSubscription, subscribeToPush, unsubscribeFromPush } from '../push.js';
 
 function deltaBadge(pct) {
@@ -456,6 +456,39 @@ function drawDurationChart(host, duration) {
   });
 }
 
+// ---------- Progress photos ----------
+
+function photoPreviewThumb(label, photo) {
+  return h(
+    'a',
+    { href: '#/photos', class: 'photo-preview-thumb' },
+    photo
+      ? h('img', { src: `/api/photos/${photo.id}/image`, alt: '' })
+      : h('div', { class: 'photo-preview-empty' }, icon('camera', 20)),
+    h('span', {}, label)
+  );
+}
+
+function photosCard(preview) {
+  return h(
+    'div',
+    { class: 'chart-card' },
+    h(
+      'div',
+      { class: 'row between' },
+      h('h3', {}, 'Progress photos'),
+      h('a', { href: '#/photos', class: 'small', style: { color: 'var(--accent-text)', fontWeight: 700 } }, 'Open gallery')
+    ),
+    h('p', {}, 'Upper and lower body, side by side over time — with an optional AI read on whether it looks like progress.'),
+    h(
+      'div',
+      { class: 'row', style: { gap: '10px', marginTop: '10px' } },
+      photoPreviewThumb('Upper', preview.upper),
+      photoPreviewThumb('Lower', preview.lower)
+    )
+  );
+}
+
 // ---------- Overview ----------
 
 export async function progressView(container) {
@@ -464,13 +497,23 @@ export async function progressView(container) {
   let overview;
   let bw;
   let duration;
+  let photosPreview;
+  let records;
 
   const load = async () => {
-    [overview, bw, duration] = await Promise.all([
+    const [ov, bwRes, dur, upperPhotos, lowerPhotos, rec] = await Promise.all([
       api.get('/api/progress/overview'),
       api.get('/api/progress/bodyweight'),
       api.get('/api/progress/duration'),
+      api.get('/api/photos?category=upper&limit=1'),
+      api.get('/api/photos?category=lower&limit=1'),
+      api.get('/api/progress/records'),
     ]);
+    overview = ov;
+    bw = bwRes;
+    duration = dur;
+    photosPreview = { upper: upperPhotos.photos[0] || null, lower: lowerPhotos.photos[0] || null };
+    records = rec;
   };
   const refresh = async () => {
     await load();
@@ -530,19 +573,28 @@ export async function progressView(container) {
         ),
         h(
           'div',
-          { class: 'segmented' },
-          ['kg', 'lb'].map((u) =>
-            h(
-              'button',
-              {
-                'aria-pressed': String(state.unit === u),
-                onClick: () => {
-                  setUnit(u);
-                  render();
+          { class: 'row', style: { gap: '8px' } },
+          h(
+            'div',
+            { class: 'segmented' },
+            ['kg', 'lb'].map((u) =>
+              h(
+                'button',
+                {
+                  'aria-pressed': String(state.unit === u),
+                  onClick: () => {
+                    setUnit(u);
+                    render();
+                  },
                 },
-              },
-              u
+                u
+              )
             )
+          ),
+          h(
+            'button',
+            { class: 'icon-btn', 'aria-label': 'Progression settings', onClick: progressionSettingsSheet },
+            icon('sliders', 22)
           )
         )
       )
@@ -574,6 +626,8 @@ export async function progressView(container) {
       const durBox = durCard.querySelector('.chart-box');
       if (durBox) drawDurationChart(durBox, duration);
     }
+
+    root.append(photosCard(photosPreview));
 
     if (!overview.has_data) {
       root.append(
@@ -640,6 +694,65 @@ export async function progressView(container) {
         },
         options: { scales: { x: { stacked: true }, y: { stacked: true, ticks: { precision: 0 } } } },
       });
+
+      const volumeCard = h(
+        'div',
+        { class: 'chart-card' },
+        h('h3', {}, 'Volume by muscle group'),
+        h('p', {}, `${state.unit}·reps lifted each week, by muscle group.`),
+        h('div', { class: 'chart-box' }),
+        h(
+          'div',
+          { class: 'legend' },
+          groups.map((g, i) =>
+            h('span', { class: 'row' }, h('span', { class: 'dot', style: { background: palette[i % palette.length] } }), g.name)
+          )
+        )
+      );
+      root.append(volumeCard);
+      drawChart(volumeCard.querySelector('.chart-box'), {
+        type: 'bar',
+        data: {
+          labels: weekLabels,
+          datasets: groups.map((g, i) => ({
+            label: g.name,
+            data: g.volume,
+            backgroundColor: palette[i % palette.length],
+            stack: 'volume',
+          })),
+        },
+        options: { scales: { x: { stacked: true }, y: { stacked: true, ticks: { precision: 0 } } } },
+      });
+
+      root.append(
+        h(
+          'div',
+          { class: 'chart-card' },
+          h('h3', {}, 'Training frequency'),
+          h('p', {}, 'Sessions in the last 4 weeks, and how many days apart on average.'),
+          h(
+            'div',
+            { class: 'freq-list' },
+            overview.muscle_groups.map((g) =>
+              h(
+                'div',
+                { class: 'freq-row', style: { '--plate': plateColor(g.id) } },
+                h('span', { class: 'dot' }),
+                h('span', { class: 'grow' }, g.name),
+                h(
+                  'span',
+                  { class: 'freq-stats' },
+                  h('b', {}, pluralize(g.frequency.sessions_last_4wk, 'session')),
+                  h('span', { class: 'muted' }, ' last 4wk'),
+                  g.frequency.avg_gap_days
+                    ? h('span', { class: 'muted' }, ` · every ~${g.frequency.avg_gap_days}d`)
+                    : null
+                )
+              )
+            )
+          )
+        )
+      );
     }
 
     const balance = balanceCard(overview);
@@ -653,7 +766,11 @@ export async function progressView(container) {
         'div',
         { class: 'row between', style: { margin: '24px 0 10px' } },
         h('h2', { style: { fontSize: '24px', margin: 0 } }, 'Your lifts'),
-        h('a', { href: '#/progress/records', class: 'small', style: { color: 'var(--accent-text)', fontWeight: 700 } }, '🏆 Records')
+        h(
+          'a',
+          { href: '#/progress/records', class: 'small', style: { color: 'var(--accent-text)', fontWeight: 700 } },
+          records?.has_data ? `🏆 ${pluralize(records.total_prs, 'PR')}` : '🏆 Records'
+        )
       )
     );
     if (!overview.lifts.length) {
@@ -699,6 +816,7 @@ const METRICS = {
     { key: 'top_weight', label: 'Top set' },
     { key: 'best_e1rm', label: 'Est. 1RM' },
     { key: 'avg_reps', label: 'Avg reps' },
+    { key: 'reps_at_top', label: 'Reps @ top' },
     { key: 'volume', label: 'Volume' },
   ],
   reps: [
@@ -712,11 +830,20 @@ const METRIC_UNIT = {
   top_weight: () => state.unit,
   best_e1rm: () => state.unit,
   avg_reps: () => 'reps',
+  reps_at_top: () => 'reps',
   best_reps: () => 'reps',
   volume: () => `${state.unit}·reps`,
   working_sets: () => 'sets',
 };
-const METRIC_DIGITS = { top_weight: 1, best_e1rm: 1, avg_reps: 1, best_reps: 0, volume: 0, working_sets: 0 };
+const METRIC_DIGITS = { top_weight: 1, best_e1rm: 1, avg_reps: 1, reps_at_top: 0, best_reps: 0, volume: 0, working_sets: 0 };
+
+/** A rough strength-at-same-load read: "reps @ top weight" trending up means you're doing
+ *  more reps at the same load, not just lifting heavier — a progress signal weight alone misses. */
+function consistencyBadge(c) {
+  if (!c) return null;
+  const cls = c.score >= 80 ? 'up' : c.score >= 60 ? '' : c.score < 40 ? 'down' : 'flat';
+  return h('span', { class: `badge ${cls}`.trim(), title: `${c.sessions_used} recent sessions` }, `${c.label} · ${c.score}%`);
+}
 
 function fmtMetric(v, key) {
   if (v === null || v === undefined) return '–';
@@ -727,6 +854,7 @@ function recordRow(r) {
   const lines = [];
   if (r.heaviest) lines.push(`Heaviest ${fmtNum(r.heaviest.weight)} × ${r.heaviest.reps}`);
   if (r.best_e1rm) lines.push(`Est. 1RM ${fmtNum(r.best_e1rm.value)} ${state.unit}`);
+  if (r.best_set_volume) lines.push(`Best set volume ${fmtVolume(r.best_set_volume.value)}`);
   if (!r.has_weight && r.best_reps) lines.push(`Best ${r.best_reps.reps} reps`);
   return h(
     'a',
@@ -773,7 +901,12 @@ export async function recordsView(container) {
       h(
         'div',
         { class: 'page-head' },
-        h('div', {}, h('h1', {}, '🏆 Personal Records'), h('p', {}, pluralize(data.records.length, 'exercise')))
+        h(
+          'div',
+          {},
+          h('h1', {}, '🏆 Personal Records'),
+          h('p', {}, `${pluralize(data.records.length, 'exercise')} · ${pluralize(data.total_prs, 'PR')} all-time`)
+        )
       ),
       h(
         'div',
@@ -841,7 +974,12 @@ export async function exerciseProgressView(container, [idParam]) {
         deltaBadge(summary.change[headline] ?? summary.change.best_reps)
       )
     ),
-    h('div', { style: { margin: '12px 0' } }, trendBadge(summary.trend))
+    h(
+      'div',
+      { class: 'row wrap', style: { margin: '12px 0', gap: '8px' } },
+      trendBadge(summary.trend),
+      consistencyBadge(summary.consistency)
+    )
   );
 
   const chartCard = h(
@@ -902,7 +1040,10 @@ export async function exerciseProgressView(container, [idParam]) {
       statCard('Heaviest set', records.heaviest ? `${fmtNum(records.heaviest.weight)}×${records.heaviest.reps}` : '–', null),
       records.best_e1rm
         ? statCard('Best est. 1RM', fmtNum(records.best_e1rm.value), state.unit)
-        : statCard('Best set', '–', null)
+        : statCard('Best set', '–', null),
+      records.best_set_volume
+        ? statCard('Best set volume', fmtVolume(records.best_set_volume.value), `${state.unit}·reps`)
+        : null
     )
   );
 

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { all, get, run, batch, updateRow } from '../db.js';
 import { estimate1RM } from '../analytics.js';
+import { getProgressionSettings, suggestForExercise } from '../progression.js';
 import {
   bad,
   notFound,
@@ -80,10 +81,16 @@ async function loadWorkout(id) {
       ORDER BY s.set_number, s.drop_index, s.id`,
     [id]
   );
+  const progressionSettings = await getProgressionSettings();
   await Promise.all(
     exercises.map(async (ex) => {
       ex.sets = sets.filter((s) => s.workout_exercise_id === ex.id);
       ex.previous = ex.archived ? null : await previousSession(ex.exercise_id, workout);
+      // Never computed for an already-removed exercise, and never applied
+      // automatically — just offered for the person to use, edit or ignore.
+      ex.suggestion = ex.archived
+        ? null
+        : await suggestForExercise(ex.exercise_id, workout, progressionSettings);
     })
   );
   return { workout, exercises };
